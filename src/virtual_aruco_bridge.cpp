@@ -75,7 +75,7 @@ void usage(const char* argv0) {
         << "  --speed-tau-s S              First-order speed response time constant, default 0.12\n"
         << "  --max-accel-mps2 A           Acceleration clamp, default 3\n"
         << "  --height-m M                 robot_position Y height, default 0.16\n"
-        << "  --yaw-offset-deg DEG         robot_position yaw offset, default 180\n"
+        << "  --yaw-offset-deg DEG         robot_position yaw offset, default 0\n"
         << "  --yaw-sign SIGN              robot_position yaw sign, default 1\n"
         << "  --pos-x-source world_x|world_y  Source for robot_position pos[0], default world_y\n"
         << "  --pos-z-source world_x|world_y  Source for robot_position pos[2], default world_x\n"

@@ -18,7 +18,7 @@ struct RobotPositionConfig {
     double posXSign = 1.0;
     CoordinateSource posZSource = CoordinateSource::WorldX;
     double posZSign = 1.0;
-    double yawOffsetDeg = 180.0;
+    double yawOffsetDeg = 0.0;
     double yawSign = 1.0;
 };
 

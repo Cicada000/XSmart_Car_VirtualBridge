@@ -130,6 +130,17 @@ void testBuildsArucoRobotPositionJson() {
     assert(json.find("\"t_aruco_emit_ns\":123456789") != std::string::npos);
 }
 
+void testDefaultYawOffsetKeepsModelHeadingAlignedWithPublishedYaw() {
+    virtual_bridge::RobotPositionConfig config;
+
+    const std::string json = virtual_bridge::buildRobotPositionJson(
+        {1.25, 2.5, 45.0},
+        config,
+        123456789);
+
+    assert(json.find("\"euler\":[0.0,45.000000,0.0]") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -139,5 +150,6 @@ int main() {
     testStraightMotionPublishesOffsetPosePoint();
     testTurningMotionUsesBicycleYawRate();
     testBuildsArucoRobotPositionJson();
+    testDefaultYawOffsetKeepsModelHeadingAlignedWithPublishedYaw();
     return 0;
 }

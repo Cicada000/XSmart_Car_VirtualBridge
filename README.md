@@ -61,9 +61,14 @@ By default, output coordinate mapping follows `ArucoCalibCpp/config.yaml`:
 
 - `pos[0] = world_y_mm * 0.001`
 - `pos[2] = world_x_mm * 0.001`
-- `euler[1] = 180 + heading_deg`
+- `euler[1] = heading_deg`
 
 The simulator stores coordinates internally in meters. Initial pose arguments
 are in millimeters to match ArUco field coordinates.
+
+`--initial-heading-deg` is the vehicle front direction in the ArUco world XY
+plane. If you copy `yaw_deg` from old `ArucoCalibCpp` raw pose logs, add
+`180 deg` first because that logged angle came from a marker edge, not the
+virtual vehicle front direction.
 
 Run `./build/virtual_aruco_bridge --help` for all model and protocol options.
