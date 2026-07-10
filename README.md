@@ -1,26 +1,26 @@
 # XSmart_Car_VirtualBridge
 
-`VirtualBridge` 是 `XSmart_Car_LineFollower` 的虚拟下位机与虚拟定位桥接程序。它用于在没有真实小车、真实串口下位机和真实 ArUco 相机定位系统时，闭环测试上位机循线控制程序。
+`VirtualBridge` 是 `XSmart_Car_LineFollower` 的虚拟下位机和虚拟定位桥接程序。它用于在没有真实小车、真实串口下位机和真实 ArUco 相机定位系统时，闭环测试上位机循线控制程序。
 
-程序做两件事：
+程序负责两件事：
 
 1. 监听 `XSmart_Car_LineFollower` 原本发给 `icar_socket_bridge` 的 TCP 控制帧，解析速度和舵机 PWM。
-2. 使用简化车辆运动学模型积分出虚拟车辆位置，并按 `ArucoCalibCpp` 的 `robot_position` UDP 格式发送给板卡上的定位接收程序。
+2. 使用低速车辆运动学模型积分出虚拟小车位置，并按 `ArucoCalibCpp` 兼容的 `robot_position` UDP 格式发送给板卡上的定位接收程序。
 
-因此虚拟链路是：
+虚拟闭环链路如下：
 
 ```text
 XSmart_Car_LineFollower
-  -> TCP 127.0.0.1:8899 speed/servo control frame
+  -> TCP 127.0.0.1:8899 速度/舵机控制帧
   -> VirtualBridge
   -> UDP robot_position
-  -> setupUI / xverse_ar_engine / existing pose bridge
-  -> XSmart_Car_LineFollower receives sync pose
+  -> setupUI / xverse_ar_engine / 现有位姿桥
+  -> XSmart_Car_LineFollower 接收同步位姿
 ```
 
-使用虚拟桥时，不要同时启动真实的 `icar_socket_bridge`，因为两个程序都会占用 `127.0.0.1:8899`，而且真实桥会把控制指令发到物理小车。
+使用虚拟桥时，不要同时启动真实的 `icar_socket_bridge`。两个程序都会占用 `127.0.0.1:8899`，而且真实桥会把控制指令发到物理小车。
 
-## Project Layout
+## 项目结构
 
 ```text
 VirtualBridge/
@@ -32,85 +32,84 @@ VirtualBridge/
 │   ├── AppConfig.hpp
 │   ├── ControlFrame.hpp
 │   ├── RobotPositionJson.hpp
+│   ├── TerminalStatus.hpp
 │   └── VehicleModel.hpp
 ├── src/
 │   ├── AppConfig.cpp
 │   ├── ControlFrame.cpp
 │   ├── RobotPositionJson.cpp
+│   ├── TerminalStatus.cpp
 │   ├── VehicleModel.cpp
 │   └── virtual_aruco_bridge.cpp
 └── tests/
     └── virtual_bridge_tests.cpp
 ```
 
-### Core Files
+主要文件说明：
 
-- `include/virtual_bridge/ControlFrame.hpp` and `src/ControlFrame.cpp`
+- `AppConfig.hpp` / `AppConfig.cpp`
 
-  Decode the 11-byte binary control frame sent by `XSmart_Car_LineFollower`.
-  The frame contains `float speed_mps` and `uint16 servo_pulse_us`.
+  读取 `config/virtual_bridge.json`。配置格式是带 `//` 注释的 JSON，和 `XSmart_Car_LineFollower/config/xsmart_car.json` 的风格一致。
 
-- `include/virtual_bridge/AppConfig.hpp` and `src/AppConfig.cpp`
+- `ControlFrame.hpp` / `ControlFrame.cpp`
 
-  Load runtime settings from `config/virtual_bridge.json`. The format is
-  commented JSON, matching `XSmart_Car_LineFollower/config/xsmart_car.json`.
+  解析 `XSmart_Car_LineFollower` 输出的 11 字节二进制控制帧，帧内包含 `float speed_mps` 和 `uint16 servo_pulse_us`。
 
-- `include/virtual_bridge/VehicleModel.hpp` and `src/VehicleModel.cpp`
+- `VehicleModel.hpp` / `VehicleModel.cpp`
 
-  Maintain the virtual vehicle state. The model integrates the rear axle center
-  and publishes the configured localization point in front of the rear axle.
+  维护虚拟车辆状态。模型以后轮轴中心为积分参考点，再输出配置指定的定位点。
 
-- `include/virtual_bridge/RobotPositionJson.hpp` and `src/RobotPositionJson.cpp`
+- `RobotPositionJson.hpp` / `RobotPositionJson.cpp`
 
-  Build UDP payloads compatible with `ArucoCalibCpp`:
+  生成 `ArucoCalibCpp` 兼容的 UDP JSON 数据：
 
   ```json
   {"type":"robot_position","pos":[x,0.160000,z],"euler":[0.0,yaw,0.0],"t_aruco_emit_ns":123}
   ```
 
-- `src/virtual_aruco_bridge.cpp`
+- `TerminalStatus.hpp` / `TerminalStatus.cpp`
 
-  CLI entry point. It starts the TCP control server, runs the model loop, and
-  sends UDP `robot_position` packets.
+  生成终端状态面板。交互终端中会用固定位置刷新，避免持续刷屏。
 
-- `tests/virtual_bridge_tests.cpp`
+- `virtual_aruco_bridge.cpp`
 
-  Regression tests for control-frame decoding, servo mapping, bicycle-model
-  integration, pose-point offset, JSON output, and config loading.
+  程序入口。它启动 TCP 控制服务器、运行车辆模型循环、发送 UDP 位姿数据，并刷新终端状态。
 
-## Vehicle Model
+- `virtual_bridge_tests.cpp`
 
-The simulator uses a low-speed kinematic bicycle model.
+  回归测试，覆盖控制帧解析、舵机角度映射、车辆模型积分、定位点偏移、JSON 输出、配置读取和终端状态渲染。
 
-Default parameters are stored in `config/virtual_bridge.json`:
+## 车辆模型
 
-- rear axle center is the integration reference point
-- front/rear wheelbase: `0.20 m`
-- rear wheel track: `0.155 m`
-- localization point: `0.075 m` in front of rear axle center
-- servo neutral pulse: `1500 us`
-- servo pulse span: `2000 us`, matching `500..2500 us` for `0..180 deg`
-- max front-wheel steering angle: `36 deg`
-- servo speed model: `0.16 s / 60 deg`
-- default UDP pose height: `0.16 m`
+模拟器使用低速运动学自行车模型。默认参数写在 `config/virtual_bridge.json` 中：
 
-This is suitable for:
+- 后轮轴中心是积分参考点。
+- 前后轮轴距：`0.20 m`。
+- 左右后轮轮距：`0.155 m`。
+- 定位点：后轮轴中心前方 `0.075 m`。
+- 舵机中位脉宽：`1500 us`。
+- 舵机脉宽范围：`2000 us`，对应 `500..2500 us` 的 `0..180 deg`。
+- 前轮最大转角：`36 deg`。
+- 舵机速度模型：`0.16 s / 60 deg`。
+- 默认定位高度：`0.16 m`。
 
-- testing the full control and coordinate feedback loop
-- checking whether path following logic converges
-- checking steering polarity and heading conventions
-- rough low-speed route simulation
+这个模型适合：
 
-It does not model:
+- 测试完整的控制和坐标反馈闭环。
+- 检查循线路径逻辑是否能收敛。
+- 检查转向极性和坐标朝向约定。
+- 做低速路线仿真。
 
-- tire slip
-- motor dead zone
-- battery voltage effects
-- servo linkage nonlinearity
-- backlash
-- wheel friction and ground contact details
+它不会模拟：
 
-For closer behavior, tune these parameters with real telemetry:
+- 轮胎打滑。
+- 电机死区。
+- 电池电压变化。
+- 舵机连杆非线性。
+- 机械间隙。
+- 轮胎摩擦和复杂地面接触。
+
+如果虚拟运动和实车差异较大，优先结合实车数据调整这些配置项：
 
 - `vehicle.speed_scale`
 - `vehicle.speed_tau_s`
@@ -118,27 +117,24 @@ For closer behavior, tune these parameters with real telemetry:
 - `vehicle.max_steering_deg`
 - `vehicle.steering_sign`
 
-## Configuration
+## 配置文件
 
-By default, `virtual_aruco_bridge` reads:
+默认读取：
 
 ```text
 config/virtual_bridge.json
 ```
 
-The file is JSON with `//` comments, the same style as
-`XSmart_Car_LineFollower/config/xsmart_car.json`.
+配置文件是带注释的 JSON，支持 `//` 注释。常用配置段如下：
 
-Important sections:
+- `control`：TCP 控制端点，供 `XSmart_Car_LineFollower` 连接。
+- `udp`：`robot_position` UDP 输出目标。
+- `initial_pose`：初始定位点和车头朝向。
+- `vehicle`：轴距、轮距、定位点偏移、舵机 PWM 映射和速度响应参数。
+- `robot_position`：输出坐标映射和 yaw 约定。
+- `runtime`：运行时显示行为。
 
-- `control`: TCP endpoint used by `XSmart_Car_LineFollower` control frames.
-- `udp`: UDP target that receives ArucoCalibCpp-compatible `robot_position`.
-- `initial_pose`: initial localization point and vehicle heading.
-- `vehicle`: wheelbase, rear track, pose offset, servo PWM mapping, speed model.
-- `robot_position`: output coordinate mapping and yaw convention.
-- `runtime`: logging behavior.
-
-Current tested defaults:
+当前已验证链路的默认值：
 
 ```jsonc
 "control": {
@@ -157,7 +153,7 @@ Current tested defaults:
 }
 ```
 
-To switch hardware, edit the `vehicle` section:
+切换不同硬件时，主要修改 `vehicle`：
 
 ```jsonc
 "vehicle": {
@@ -170,12 +166,11 @@ To switch hardware, edit the `vehicle` section:
 }
 ```
 
-You can still override frequently changed values from the command line. CLI
-arguments are applied after the config file is loaded.
+命令行参数仍然可用。程序会先读取配置文件，再用命令行参数覆盖对应值。
 
-## Build
+## 编译
 
-On the board:
+在板卡上执行：
 
 ```bash
 cd ~/Desktop/VirtualBridge
@@ -184,73 +179,101 @@ cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-Build outputs:
+编译产物：
 
-- `build/virtual_aruco_bridge`: main executable
-- `build/virtual_bridge_tests`: test executable
+- `build/virtual_aruco_bridge`：主程序。
+- `build/virtual_bridge_tests`：测试程序。
 
-## Startup Order
+## 启动流程
 
-### 1. Start setupUI / pose receiver
+### 1. 启动 setupUI / 位姿接收端
 
-Start the board-side program that normally receives ArUco positioning data.
-Confirm the receiver port. In the current tested setup, the working port is
-`9005`:
+先启动板卡上负责接收 ArUco 定位数据的程序，并确认接收端口。当前已验证可用端口是 `9005`：
 
 ```bash
 ss -lunp | grep -E '9000|9003|9005|9991'
 ```
 
-If a process is listening on `0.0.0.0:9005`, set `udp.port` to `9005`.
+如果看到进程监听 `0.0.0.0:9005`，保持 `config/virtual_bridge.json` 中的 `udp.port` 为 `9005`。
 
-### 2. Start VirtualBridge
+### 2. 启动 VirtualBridge
 
-With the default config, start VirtualBridge without long startup arguments:
+默认配置已经写入可用链路，所以通常只需要：
 
 ```bash
 cd ~/Desktop/VirtualBridge
 ./build/virtual_aruco_bridge
 ```
 
-Important:
+注意：
 
-- `control.port` must match `XSmart_Car_LineFollower`'s `control_bridge.port`.
-- `udp.host` and `udp.port` must point to the board-side positioning receiver.
-- Do not start `icar_socket_bridge` at the same time.
+- `control.port` 必须和 `XSmart_Car_LineFollower/config/xsmart_car.json` 的 `control_bridge.port` 一致。
+- `udp.host` 和 `udp.port` 必须指向板卡上的位姿接收端。
+- 不要同时启动真实的 `icar_socket_bridge`。
 
-For temporary changes, either pass a different config:
+如果要临时使用其他配置文件：
 
 ```bash
 ./build/virtual_aruco_bridge --config config/my_car.json
 ```
 
-or override a few values:
+如果只想临时覆盖少量参数：
 
 ```bash
 ./build/virtual_aruco_bridge --udp-port 9005 --initial-heading-deg 350
 ```
 
-### 3. Start XSmart_Car_LineFollower
+### 3. 启动 XSmart_Car_LineFollower
 
-Normal control mode:
+普通控制模式：
 
 ```bash
 cd ~/Desktop/XSmart_Car_LineFollower
 ./build/xsmart_car -d
 ```
 
-Debug view while still sending control frames:
+带浏览器调试画面，并继续输出控制帧：
 
 ```bash
 cd ~/Desktop/XSmart_Car_LineFollower
 ./build/xsmart_car -d --debug --debug-control -w 8082
 ```
 
-`--debug-control` is required when using `--debug`; otherwise the XSmart program disables bridge control output and VirtualBridge will receive no speed/servo commands.
+使用 `--debug` 时必须加 `--debug-control`，否则 XSmart 程序会禁用桥接控制输出，VirtualBridge 收不到速度和舵机指令。
 
-## Initial Pose
+## 终端显示
 
-Initial pose is configured in `config/virtual_bridge.json`:
+默认非静默模式下，如果程序运行在交互终端中，会显示一个固定位置刷新的状态面板，而不是持续追加日志行。
+
+状态面板包含：
+
+- 配置文件路径。
+- TCP 控制端口和连接状态。
+- UDP 位姿输出目标和发送频率。
+- 当前定位点坐标和朝向。
+- 后轮轴速度和前轮转角。
+- 最新控制指令中的速度、舵机 PWM 和控制帧计数。
+- UDP 发送错误计数。
+
+如果标准输出不是交互终端，例如被重定向到文件或由脚本捕获，程序会自动退回普通文本输出，避免把 ANSI 控制字符写入日志文件。
+
+完全关闭周期性显示：
+
+```bash
+./build/virtual_aruco_bridge --quiet
+```
+
+也可以在配置中设置：
+
+```jsonc
+"runtime": {
+  "quiet": true
+}
+```
+
+## 初始位姿
+
+初始位姿写在 `config/virtual_bridge.json`：
 
 ```jsonc
 "initial_pose": {
@@ -260,34 +283,28 @@ Initial pose is configured in `config/virtual_bridge.json`:
 }
 ```
 
-These values describe the localization point, not the rear axle center. The
-localization point is the point `vehicle.pose_offset_m` in front of the rear
-axle center.
+这里的坐标描述的是定位点，不是后轮轴中心。定位点位于后轮轴中心前方 `vehicle.pose_offset_m`。
 
-The first two values use ArUco field coordinates in millimeters. The heading is
-the virtual vehicle front direction in the ArUco world XY plane.
+`world_x_mm` 和 `world_y_mm` 使用 ArUco 世界坐标，单位是毫米。`heading_deg` 表示虚拟小车车头方向。
 
-If you copy `yaw_deg` from old `ArucoCalibCpp` raw pose logs, add `180 deg`
-before passing it to `VirtualBridge`, because that raw yaw was computed from a
-marker edge rather than from the virtual vehicle front direction.
+如果你从旧的 `ArucoCalibCpp` 原始日志复制 `yaw_deg`，需要先加 `180 deg` 再填入 VirtualBridge，因为旧 raw yaw 是从 marker 边方向计算的，不是小车车头方向。
 
-Example:
+示例：
 
 ```text
-old ArUco raw yaw_deg = 170
+旧 ArUco raw yaw_deg = 170
 VirtualBridge initial heading = 170 + 180 = 350
 ```
 
-The same correction in config is:
+写到配置里就是：
 
 ```jsonc
 "heading_deg": 350.0
 ```
 
-## Coordinate Output
+## 坐标输出约定
 
-By default, output mapping follows the tested `ArucoCalibCpp/config.yaml`
-convention:
+默认输出映射匹配当前已验证的 `ArucoCalibCpp/config.yaml` 约定：
 
 ```text
 robot_position.pos[0] = world_y_m
@@ -296,7 +313,7 @@ robot_position.pos[2] = world_x_m
 robot_position.euler[1] = heading_deg
 ```
 
-Equivalent defaults:
+对应配置：
 
 ```jsonc
 "robot_position": {
@@ -310,13 +327,11 @@ Equivalent defaults:
 }
 ```
 
-If a receiver expects a different coordinate convention, edit these values or
-override them at startup.
+如果接收端坐标约定不同，修改这些配置项即可。
 
-## Control Input
+## 控制输入格式
 
-VirtualBridge listens for the same 11-byte control frame used by
-`icar_socket_bridge`:
+VirtualBridge 监听和 `icar_socket_bridge` 相同的 11 字节控制帧：
 
 ```text
 byte 0       0x42
@@ -324,98 +339,90 @@ byte 1       address = 1
 byte 2       length = 10
 byte 3..6    float32 little-endian speed_mps
 byte 7..8    uint16 little-endian servo_pulse_us
-byte 9       checksum over bytes 0..8
-byte 10      unused / reserved by original frame layout
+byte 9       bytes 0..8 的校验和
+byte 10      原始帧布局中的保留字节
 ```
 
-When the link is working, VirtualBridge prints lines like:
+链路正常时，终端状态面板里的 `frames` 会持续增加，`servo` 会显示最新舵机 PWM。
 
-```text
-[control] client connected
-[control] speed=0.000 servo=1684
-[control] speed=1.026 servo=1542
-```
+如果 `frames=0`，说明还没有收到任何控制帧。
 
-`command_frames=0` in status output means no control frame has arrived yet.
+## 常用命令
 
-## Common Commands
-
-Show CLI options:
+查看命令行参数：
 
 ```bash
 ./build/virtual_aruco_bridge --help
 ```
 
-Run with reversed steering polarity:
+临时反转转向极性：
 
 ```bash
 ./build/virtual_aruco_bridge --steering-sign -1
 ```
 
-Run with slower simulated speed:
+临时降低虚拟速度：
 
 ```bash
 ./build/virtual_aruco_bridge --speed-scale 0.7
 ```
 
-Run quietly:
+静默运行：
 
 ```bash
 ./build/virtual_aruco_bridge --quiet
 ```
 
-## Troubleshooting
+## 故障排查
 
-### VirtualBridge says `command_frames=0`
+### 状态面板里 `frames=0`
 
-`XSmart_Car_LineFollower` has not connected to `127.0.0.1:8899`.
+说明 `XSmart_Car_LineFollower` 还没有连接到 `127.0.0.1:8899`，或连接后没有发送控制帧。
 
-Check:
+检查监听端口：
 
 ```bash
 ss -ltnp | grep 8899
 ```
 
-Make sure the real `icar_socket_bridge` is not already using the same port.
+确认真实的 `icar_socket_bridge` 没有占用同一个端口。
 
-If XSmart is running with `--debug`, start it with `--debug-control`.
+如果 XSmart 使用 `--debug` 启动，必须同时加上 `--debug-control`。
 
-### setupUI receives nothing
+### setupUI 收不到虚拟位姿
 
-Check the UDP receiver port:
+检查 UDP 接收端口：
 
 ```bash
 ss -lunp | grep -E '9000|9003|9005|9991'
 ```
 
-Then make `udp.port` match the actual receiver. In the tested chain, `9005` is
-the working port.
+然后让 `config/virtual_bridge.json` 中的 `udp.port` 匹配实际监听端口。当前已验证链路使用 `9005`。
 
-### Virtual car moves backward
+### 虚拟小车向后走
 
-Most likely the initial heading is 180 degrees off.
+最常见原因是初始朝向差了 `180 deg`。
 
-If you copied a raw ArUco `yaw_deg`, add `180` before passing it as
-`initial_pose.heading_deg`.
+如果你复制的是旧 ArUco raw yaw，需要加 `180` 后填入 `initial_pose.heading_deg`。
 
-Example:
+示例：
 
 ```text
-wrong: "heading_deg": 170.0
-right: "heading_deg": 350.0
+错误："heading_deg": 170.0
+正确："heading_deg": 350.0
 ```
 
-### Virtual car turns opposite direction
+### 虚拟小车左右转向相反
 
-Use:
+修改：
 
 ```jsonc
 "steering_sign": -1.0
 ```
 
-### Route tracking is directionally correct but not close enough
+### 路线方向正确但偏差较大
 
-Tune:
+优先调这些参数：
 
 ```text
 vehicle.speed_scale
@@ -424,5 +431,4 @@ vehicle.max_accel_mps2
 vehicle.max_steering_deg
 ```
 
-The current model is a low-speed kinematic model, not a full physical tire and
-motor simulator.
+当前模型是低速运动学模型，不是完整轮胎、电机和地面物理仿真。调参时建议先让速度尺度和最大转角贴近实车，再微调响应时间和加速度限制。

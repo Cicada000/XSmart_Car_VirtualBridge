@@ -1,6 +1,7 @@
 #include "virtual_bridge/AppConfig.hpp"
 #include "virtual_bridge/ControlFrame.hpp"
 #include "virtual_bridge/RobotPositionJson.hpp"
+#include "virtual_bridge/TerminalStatus.hpp"
 #include "virtual_bridge/VehicleModel.hpp"
 
 #include <arpa/inet.h>
@@ -11,12 +12,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <sys/select.h>
@@ -33,6 +32,7 @@ struct SharedCommand {
     std::mutex mutex;
     virtual_bridge::ControlCommand command;
     std::uint64_t frameCount = 0;
+    bool clientConnected = false;
 };
 
 void handleSignal(int) {
@@ -127,12 +127,23 @@ void setLatestCommand(SharedCommand& shared, const virtual_bridge::ControlComman
     ++shared.frameCount;
 }
 
-std::pair<virtual_bridge::ControlCommand, std::uint64_t> latestCommand(SharedCommand& shared) {
+void setClientConnected(SharedCommand& shared, bool connected) {
     std::lock_guard<std::mutex> lock(shared.mutex);
-    return {shared.command, shared.frameCount};
+    shared.clientConnected = connected;
 }
 
-void handleControlClient(int clientFd, SharedCommand& shared, bool quiet) {
+struct SharedCommandSnapshot {
+    virtual_bridge::ControlCommand command;
+    std::uint64_t frameCount = 0;
+    bool clientConnected = false;
+};
+
+SharedCommandSnapshot latestCommand(SharedCommand& shared) {
+    std::lock_guard<std::mutex> lock(shared.mutex);
+    return {shared.command, shared.frameCount, shared.clientConnected};
+}
+
+void handleControlClient(int clientFd, SharedCommand& shared) {
     timeval tv{};
     tv.tv_sec = 0;
     tv.tv_usec = 200000;
@@ -154,10 +165,6 @@ void handleControlClient(int clientFd, SharedCommand& shared, bool quiet) {
             pending, buffer, static_cast<std::size_t>(n), commands);
         for (const virtual_bridge::ControlCommand& command : commands) {
             setLatestCommand(shared, command);
-            if (!quiet) {
-                std::cout << "[control] speed=" << command.speedMps
-                          << " servo=" << command.servoPulseUs << "\n";
-            }
         }
     }
 }
@@ -165,10 +172,6 @@ void handleControlClient(int clientFd, SharedCommand& shared, bool quiet) {
 void controlServerLoop(const virtual_bridge::AppConfig& options, SharedCommand& shared) {
     try {
         const int serverFd = createTcpServer(options.controlBindIp, options.controlPort);
-        if (!options.quiet) {
-            std::cout << "virtual_aruco_bridge control_tcp="
-                      << options.controlBindIp << ":" << options.controlPort << "\n";
-        }
 
         while (g_running.load()) {
             fd_set readSet;
@@ -193,12 +196,13 @@ void controlServerLoop(const virtual_bridge::AppConfig& options, SharedCommand& 
             }
             int one = 1;
             setsockopt(clientFd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-            if (!options.quiet) std::cout << "[control] client connected\n";
-            handleControlClient(clientFd, shared, options.quiet);
+            setClientConnected(shared, true);
+            handleControlClient(clientFd, shared);
+            setClientConnected(shared, false);
             ::shutdown(clientFd, SHUT_RDWR);
             ::close(clientFd);
-            if (!options.quiet) std::cout << "[control] client disconnected\n";
         }
+        setClientConnected(shared, false);
         ::close(serverFd);
     } catch (const std::exception& ex) {
         std::cerr << "control server error: " << ex.what() << "\n";
@@ -246,7 +250,8 @@ int main(int argc, char** argv) {
             options.initialWorldYmm * 0.001,
             options.initialHeadingDeg);
 
-        if (!options.quiet) {
+        const bool useTui = !options.quiet && ::isatty(STDOUT_FILENO);
+        if (!options.quiet && !useTui) {
             std::cout << "virtual_aruco_bridge udp_robot_position="
                       << options.udpHost << ":" << options.udpPort
                       << " send_hz=" << options.sendHz << "\n"
@@ -263,16 +268,39 @@ int main(int argc, char** argv) {
 
         const double sendHz = options.sendHz > 0.0 ? options.sendHz : 30.0;
         const auto frameDuration = std::chrono::duration<double>(1.0 / sendHz);
+        const auto statusDuration = useTui
+            ? std::chrono::duration<double>(0.1)
+            : std::chrono::duration<double>(1.0);
         auto last = std::chrono::steady_clock::now();
-        auto nextStatus = last + std::chrono::seconds(1);
+        auto nextStatus = last;
+        bool firstTuiFrame = true;
+        std::uint64_t udpSendErrors = 0;
+
+        auto makeStatus = [&]() {
+            const SharedCommandSnapshot snapshot = latestCommand(shared);
+            virtual_bridge::TerminalStatus status;
+            status.configPath = options.configPath;
+            status.controlBindIp = options.controlBindIp;
+            status.controlPort = options.controlPort;
+            status.controlConnected = snapshot.clientConnected;
+            status.udpHost = options.udpHost;
+            status.udpPort = options.udpPort;
+            status.sendHz = sendHz;
+            status.pose = model.posePoint();
+            status.rear = model.rearAxlePose();
+            status.command = snapshot.command;
+            status.commandFrames = snapshot.frameCount;
+            status.udpSendErrors = udpSendErrors;
+            return status;
+        };
 
         while (g_running.load()) {
             const auto now = std::chrono::steady_clock::now();
             const double dtS = std::chrono::duration<double>(now - last).count();
             last = now;
 
-            const auto [command, commandFrames] = latestCommand(shared);
-            model.update(command, dtS);
+            const SharedCommandSnapshot snapshot = latestCommand(shared);
+            model.update(snapshot.command, dtS);
             const virtual_bridge::PosePoint pose = model.posePoint();
             const std::string payload =
                 virtual_bridge::buildRobotPositionJson(pose, options.robotPosition, monotonicNowNs());
@@ -283,20 +311,22 @@ int main(int argc, char** argv) {
                 0,
                 reinterpret_cast<const sockaddr*>(&udpTarget),
                 sizeof(udpTarget));
-            if (sent < 0 && !options.quiet) {
+            if (sent < 0) {
+                ++udpSendErrors;
+            }
+            if (sent < 0 && !options.quiet && !useTui) {
                 std::cerr << "udp send failed: " << std::strerror(errno) << "\n";
             }
 
             if (!options.quiet && now >= nextStatus) {
-                const virtual_bridge::RearAxlePose rear = model.rearAxlePose();
-                std::cout << std::fixed << std::setprecision(3)
-                          << "[pose] point_x_m=" << pose.worldXM
-                          << " point_y_m=" << pose.worldYM
-                          << " heading_deg=" << pose.headingDeg
-                          << " rear_speed_mps=" << rear.speedMps
-                          << " steering_deg=" << virtual_bridge::radiansToDegrees(rear.steeringRad)
-                          << " command_frames=" << commandFrames << "\n";
-                nextStatus = now + std::chrono::seconds(1);
+                const virtual_bridge::TerminalStatus status = makeStatus();
+                if (useTui) {
+                    std::cout << virtual_bridge::buildTuiFrame(status, firstTuiFrame) << std::flush;
+                    firstTuiFrame = false;
+                } else {
+                    std::cout << virtual_bridge::buildLegacyStatusLine(status) << std::flush;
+                }
+                nextStatus = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(statusDuration);
             }
 
             std::this_thread::sleep_until(now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(frameDuration));
@@ -304,6 +334,9 @@ int main(int argc, char** argv) {
 
         ::close(udpFd);
         if (controlThread.joinable()) controlThread.join();
+        if (useTui && !firstTuiFrame) {
+            std::cout << virtual_bridge::buildTuiShutdownFrame() << std::flush;
+        }
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "virtual_aruco_bridge error: " << ex.what() << "\n";

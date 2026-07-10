@@ -1,6 +1,7 @@
 #include "virtual_bridge/ControlFrame.hpp"
 #include "virtual_bridge/AppConfig.hpp"
 #include "virtual_bridge/RobotPositionJson.hpp"
+#include "virtual_bridge/TerminalStatus.hpp"
 #include "virtual_bridge/VehicleModel.hpp"
 
 #include <cassert>
@@ -285,6 +286,52 @@ void testRejectsInvalidCoordinateSourceInConfig() {
     assert(threw);
 }
 
+void testBuildsStatusPanelForTerminalRefresh() {
+    virtual_bridge::TerminalStatus status;
+    status.configPath = "config/virtual_bridge.json";
+    status.controlBindIp = "127.0.0.1";
+    status.controlPort = 8899;
+    status.controlConnected = true;
+    status.udpHost = "127.0.0.1";
+    status.udpPort = 9005;
+    status.sendHz = 30.0;
+    status.pose = {0.315, 1.077, 350.0};
+    status.rear.speedMps = 0.42;
+    status.rear.steeringRad = virtual_bridge::degreesToRadians(-12.5);
+    status.command.speedMps = 0.5f;
+    status.command.servoPulseUs = 1684;
+    status.commandFrames = 23;
+    status.udpSendErrors = 2;
+
+    const std::string panel = virtual_bridge::buildStatusPanel(status);
+
+    assert(panel.find("VirtualBridge") != std::string::npos);
+    assert(panel.find("config/virtual_bridge.json") != std::string::npos);
+    assert(panel.find("control_tcp: 127.0.0.1:8899 connected") != std::string::npos);
+    assert(panel.find("udp_robot_position: 127.0.0.1:9005 @ 30.000 Hz") != std::string::npos);
+    assert(panel.find("pose_point_m: x=0.315 y=1.077 heading=350.000 deg") != std::string::npos);
+    assert(panel.find("rear: speed=0.420 m/s steering=-12.500 deg") != std::string::npos);
+    assert(panel.find("command: speed=0.500 m/s servo=1684 frames=23") != std::string::npos);
+    assert(panel.find("udp_send_errors: 2") != std::string::npos);
+}
+
+void testBuildsAnsiTuiFrames() {
+    virtual_bridge::TerminalStatus status;
+    status.controlBindIp = "127.0.0.1";
+    status.controlPort = 8899;
+    status.udpHost = "127.0.0.1";
+    status.udpPort = 9005;
+
+    const std::string first = virtual_bridge::buildTuiFrame(status, true);
+    const std::string next = virtual_bridge::buildTuiFrame(status, false);
+
+    assert(first.rfind("\x1b[?25l\x1b[2J\x1b[H", 0) == 0);
+    assert(first.find("\x1b[J") != std::string::npos);
+    assert(next.rfind("\x1b[H", 0) == 0);
+    assert(next.find("\x1b[2J") == std::string::npos);
+    assert(virtual_bridge::buildTuiShutdownFrame() == "\x1b[?25h\n");
+}
+
 } // namespace
 
 int main() {
@@ -299,5 +346,7 @@ int main() {
     testLoadsDefaultConfigFile();
     testCommandLineOverridesLoadedConfigValues();
     testRejectsInvalidCoordinateSourceInConfig();
+    testBuildsStatusPanelForTerminalRefresh();
+    testBuildsAnsiTuiFrames();
     return 0;
 }

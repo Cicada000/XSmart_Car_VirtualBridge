@@ -9,6 +9,7 @@ add_library(virtual_bridge_core
   src/AppConfig.cpp
   src/ControlFrame.cpp
   src/RobotPositionJson.cpp
+  src/TerminalStatus.cpp
   src/VehicleModel.cpp
 )
 
