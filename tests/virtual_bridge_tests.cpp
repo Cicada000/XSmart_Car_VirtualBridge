@@ -1,4 +1,5 @@
 #include "virtual_bridge/ControlFrame.hpp"
+#include "virtual_bridge/AppConfig.hpp"
 #include "virtual_bridge/RobotPositionJson.hpp"
 #include "virtual_bridge/VehicleModel.hpp"
 
@@ -6,7 +7,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -141,6 +144,147 @@ void testDefaultYawOffsetKeepsModelHeadingAlignedWithPublishedYaw() {
     assert(json.find("\"euler\":[0.0,45.000000,0.0]") != std::string::npos);
 }
 
+void testLoadsRuntimeConfigFromJsonFile() {
+    const std::string path = "/tmp/virtual_bridge_config_test.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  // TCP endpoint that XSmart_Car_LineFollower connects to.
+  "control": {
+    "bind_ip": "0.0.0.0",
+    "port": 18899
+  },
+  // UDP robot_position target.
+  "udp": {
+    "host": "127.0.0.1",
+    "port": 19005,
+    "send_hz": 42.0
+  },
+  "initial_pose": {
+    "world_x_mm": 315.0,
+    "world_y_mm": 1077.0,
+    "heading_deg": 350.0
+  },
+  "vehicle": {
+    "wheelbase_m": 0.21,
+    "rear_track_m": 0.16,
+    "pose_offset_m": 0.08,
+    "servo_mid_us": 1490,
+    "servo_span_us": 1980.0,
+    "max_steering_deg": 32.0,
+    "steering_sign": -1.0,
+    "servo_sec_per_60_deg": 0.18,
+    "speed_scale": 0.75,
+    "speed_tau_s": 0.20,
+    "max_accel_mps2": 2.2,
+    "clamp_negative_speed": false,
+    "max_dt_s": 0.15
+  },
+  "robot_position": {
+    "height_m": 0.17,
+    "pos_x_source": "world_x",
+    "pos_x_sign": -1.0,
+    "pos_z_source": "world_y",
+    "pos_z_sign": 1.0,
+    "yaw_offset_deg": 5.0,
+    "yaw_sign": -1.0
+  },
+  "runtime": {
+    "quiet": true
+  },
+  "unused_array": [1, true, "x", {"nested": null}]
+})json";
+    }
+
+    const virtual_bridge::AppConfig config = virtual_bridge::loadAppConfigFile(path);
+
+    assert(config.controlBindIp == "0.0.0.0");
+    assert(config.controlPort == 18899);
+    assert(config.udpHost == "127.0.0.1");
+    assert(config.udpPort == 19005);
+    assert(std::fabs(config.sendHz - 42.0) < 1e-12);
+    assert(std::fabs(config.initialWorldXmm - 315.0) < 1e-12);
+    assert(std::fabs(config.initialWorldYmm - 1077.0) < 1e-12);
+    assert(std::fabs(config.initialHeadingDeg - 350.0) < 1e-12);
+    assert(std::fabs(config.vehicle.wheelbaseM - 0.21) < 1e-12);
+    assert(std::fabs(config.vehicle.rearTrackM - 0.16) < 1e-12);
+    assert(std::fabs(config.vehicle.posePointForwardOffsetM - 0.08) < 1e-12);
+    assert(config.vehicle.servoMidPulseUs == 1490);
+    assert(std::fabs(config.vehicle.servoPulseSpanUs - 1980.0) < 1e-12);
+    assert(std::fabs(config.vehicle.maxSteeringDeg - 32.0) < 1e-12);
+    assert(std::fabs(config.vehicle.steeringSign + 1.0) < 1e-12);
+    assert(std::fabs(config.vehicle.servoSecPer60Deg - 0.18) < 1e-12);
+    assert(std::fabs(config.vehicle.speedScale - 0.75) < 1e-12);
+    assert(std::fabs(config.vehicle.speedTimeConstantS - 0.20) < 1e-12);
+    assert(std::fabs(config.vehicle.maxAccelMps2 - 2.2) < 1e-12);
+    assert(!config.vehicle.clampNegativeSpeed);
+    assert(std::fabs(config.vehicle.maxDtS - 0.15) < 1e-12);
+    assert(std::fabs(config.robotPosition.heightM - 0.17) < 1e-12);
+    assert(config.robotPosition.posXSource == virtual_bridge::CoordinateSource::WorldX);
+    assert(std::fabs(config.robotPosition.posXSign + 1.0) < 1e-12);
+    assert(config.robotPosition.posZSource == virtual_bridge::CoordinateSource::WorldY);
+    assert(std::fabs(config.robotPosition.posZSign - 1.0) < 1e-12);
+    assert(std::fabs(config.robotPosition.yawOffsetDeg - 5.0) < 1e-12);
+    assert(std::fabs(config.robotPosition.yawSign + 1.0) < 1e-12);
+    assert(config.quiet);
+}
+
+void testLoadsDefaultConfigFile() {
+    const virtual_bridge::AppConfig config =
+        virtual_bridge::loadAppConfigFile("config/virtual_bridge.json");
+
+    assert(config.controlBindIp == "127.0.0.1");
+    assert(config.controlPort == 8899);
+    assert(config.udpHost == "127.0.0.1");
+    assert(config.udpPort == 9005);
+    assert(std::fabs(config.initialWorldXmm - 315.0) < 1e-12);
+    assert(std::fabs(config.initialWorldYmm - 1077.0) < 1e-12);
+    assert(std::fabs(config.initialHeadingDeg - 350.0) < 1e-12);
+    assert(std::fabs(config.vehicle.wheelbaseM - 0.20) < 1e-12);
+    assert(std::fabs(config.vehicle.rearTrackM - 0.155) < 1e-12);
+    assert(std::fabs(config.vehicle.posePointForwardOffsetM - 0.075) < 1e-12);
+}
+
+void testCommandLineOverridesLoadedConfigValues() {
+    virtual_bridge::AppConfig config;
+    config.udpPort = 19005;
+    config.vehicle.wheelbaseM = 0.21;
+    config.quiet = false;
+
+    const char* argv[] = {
+        "virtual_aruco_bridge",
+        "--udp-port", "9005",
+        "--wheelbase-m", "0.25",
+        "--quiet"
+    };
+
+    virtual_bridge::applyCommandLineOverrides(config, 6, argv);
+
+    assert(config.udpPort == 9005);
+    assert(std::fabs(config.vehicle.wheelbaseM - 0.25) < 1e-12);
+    assert(config.quiet);
+}
+
+void testRejectsInvalidCoordinateSourceInConfig() {
+    const std::string path = "/tmp/virtual_bridge_bad_config_test.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "robot_position": {
+    "pos_x_source": "bad_axis"
+  }
+})json";
+    }
+
+    bool threw = false;
+    try {
+        (void)virtual_bridge::loadAppConfigFile(path);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    assert(threw);
+}
+
 } // namespace
 
 int main() {
@@ -151,5 +295,9 @@ int main() {
     testTurningMotionUsesBicycleYawRate();
     testBuildsArucoRobotPositionJson();
     testDefaultYawOffsetKeepsModelHeadingAlignedWithPublishedYaw();
+    testLoadsRuntimeConfigFromJsonFile();
+    testLoadsDefaultConfigFile();
+    testCommandLineOverridesLoadedConfigValues();
+    testRejectsInvalidCoordinateSourceInConfig();
     return 0;
 }

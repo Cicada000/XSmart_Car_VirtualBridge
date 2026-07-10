@@ -1,0 +1,76 @@
+{
+  // TCP 控制端点，XSmart_Car_LineFollower 会连接到这里发送速度和舵机 PWM。
+  "control": {
+    // 通常保持本机，因为 XSmart 和 VirtualBridge 运行在同一块板卡上。
+    "bind_ip": "127.0.0.1",
+    // 必须和 XSmart_Car_LineFollower/config/xsmart_car.json 的 control_bridge.port 一致。
+    "port": 8899
+  },
+
+  // UDP 定位输出目标，接收 ArucoCalibCpp 兼容的 robot_position 数据包。
+  "udp": {
+    // 已验证链路中 setupUI/xverse 接收端在本机。
+    "host": "127.0.0.1",
+    // 已验证链路中 9005 是可用接收端口。
+    "port": 9005,
+    // 虚拟定位数据发送频率。
+    "send_hz": 30.0
+  },
+
+  // 初始定位点，使用 ArUco 世界坐标系。
+  "initial_pose": {
+    // 坐标单位是毫米。
+    "world_x_mm": 315.0,
+    "world_y_mm": 1077.0,
+    // 小车车头朝向。如果从旧 ArUco raw yaw 复制数值，需要先加 180 度。
+    "heading_deg": 350.0
+  },
+
+  // 车辆几何尺寸和执行器响应参数。
+  "vehicle": {
+    // 前后轮轴距。
+    "wheelbase_m": 0.20,
+    // 左右后轮轮距。当前自行车模型不直接使用，保留用于硬件记录和后续模型。
+    "rear_track_m": 0.155,
+    // 定位点相对后轮轴中心的前向偏移。
+    "pose_offset_m": 0.075,
+    // 舵机中位脉宽。
+    "servo_mid_us": 1500,
+    // 180 度对应的脉宽范围，匹配 500..2500 us。
+    "servo_span_us": 2000.0,
+    // 虚拟自行车模型使用的前轮最大转角。
+    "max_steering_deg": 36.0,
+    // 如果虚拟小车转向和预期相反，改为 -1。
+    "steering_sign": 1.0,
+    // 舵机参数：5V 下约 0.16s/60deg，6.8V 下约 0.14s/60deg。
+    "servo_sec_per_60_deg": 0.16,
+    // XSmart 输出速度到仿真 m/s 的比例系数。
+    "speed_scale": 1.0,
+    // 一阶速度响应时间常数。
+    "speed_tau_s": 0.12,
+    // 加速度限制。
+    "max_accel_mps2": 3.0,
+    // 普通前进循线测试保持 true，避免负速度导致倒车。
+    "clamp_negative_speed": true,
+    // 程序卡顿或暂停后限制单步积分时间，避免位置突然跳变。
+    "max_dt_s": 0.20
+  },
+
+  // ArucoCalibCpp 兼容的 robot_position 输出坐标约定。
+  "robot_position": {
+    "height_m": 0.16,
+    // 以下默认值匹配已验证的 ArucoCalibCpp 坐标映射。
+    "pos_x_source": "world_y",
+    "pos_x_sign": 1.0,
+    "pos_z_source": "world_x",
+    "pos_z_sign": 1.0,
+    // 虚拟 heading 已经表示小车车头方向。
+    "yaw_offset_deg": 0.0,
+    "yaw_sign": 1.0
+  },
+
+  "runtime": {
+    // 设为 true 可关闭周期性状态输出。
+    "quiet": false
+  }
+}

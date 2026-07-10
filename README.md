@@ -26,11 +26,15 @@ XSmart_Car_LineFollower
 VirtualBridge/
 ├── CMakeLists.txt
 ├── README.md
+├── config/
+│   └── virtual_bridge.json
 ├── include/virtual_bridge/
+│   ├── AppConfig.hpp
 │   ├── ControlFrame.hpp
 │   ├── RobotPositionJson.hpp
 │   └── VehicleModel.hpp
 ├── src/
+│   ├── AppConfig.cpp
 │   ├── ControlFrame.cpp
 │   ├── RobotPositionJson.cpp
 │   ├── VehicleModel.cpp
@@ -45,6 +49,11 @@ VirtualBridge/
 
   Decode the 11-byte binary control frame sent by `XSmart_Car_LineFollower`.
   The frame contains `float speed_mps` and `uint16 servo_pulse_us`.
+
+- `include/virtual_bridge/AppConfig.hpp` and `src/AppConfig.cpp`
+
+  Load runtime settings from `config/virtual_bridge.json`. The format is
+  commented JSON, matching `XSmart_Car_LineFollower/config/xsmart_car.json`.
 
 - `include/virtual_bridge/VehicleModel.hpp` and `src/VehicleModel.cpp`
 
@@ -67,13 +76,13 @@ VirtualBridge/
 - `tests/virtual_bridge_tests.cpp`
 
   Regression tests for control-frame decoding, servo mapping, bicycle-model
-  integration, pose-point offset, and JSON output.
+  integration, pose-point offset, JSON output, and config loading.
 
 ## Vehicle Model
 
 The simulator uses a low-speed kinematic bicycle model.
 
-Default parameters:
+Default parameters are stored in `config/virtual_bridge.json`:
 
 - rear axle center is the integration reference point
 - front/rear wheelbase: `0.20 m`
@@ -103,11 +112,66 @@ It does not model:
 
 For closer behavior, tune these parameters with real telemetry:
 
-- `--speed-scale`
-- `--speed-tau-s`
-- `--max-accel-mps2`
-- `--max-steering-deg`
-- `--steering-sign`
+- `vehicle.speed_scale`
+- `vehicle.speed_tau_s`
+- `vehicle.max_accel_mps2`
+- `vehicle.max_steering_deg`
+- `vehicle.steering_sign`
+
+## Configuration
+
+By default, `virtual_aruco_bridge` reads:
+
+```text
+config/virtual_bridge.json
+```
+
+The file is JSON with `//` comments, the same style as
+`XSmart_Car_LineFollower/config/xsmart_car.json`.
+
+Important sections:
+
+- `control`: TCP endpoint used by `XSmart_Car_LineFollower` control frames.
+- `udp`: UDP target that receives ArucoCalibCpp-compatible `robot_position`.
+- `initial_pose`: initial localization point and vehicle heading.
+- `vehicle`: wheelbase, rear track, pose offset, servo PWM mapping, speed model.
+- `robot_position`: output coordinate mapping and yaw convention.
+- `runtime`: logging behavior.
+
+Current tested defaults:
+
+```jsonc
+"control": {
+  "bind_ip": "127.0.0.1",
+  "port": 8899
+},
+"udp": {
+  "host": "127.0.0.1",
+  "port": 9005,
+  "send_hz": 30.0
+},
+"initial_pose": {
+  "world_x_mm": 315.0,
+  "world_y_mm": 1077.0,
+  "heading_deg": 350.0
+}
+```
+
+To switch hardware, edit the `vehicle` section:
+
+```jsonc
+"vehicle": {
+  "wheelbase_m": 0.20,
+  "rear_track_m": 0.155,
+  "pose_offset_m": 0.075,
+  "servo_mid_us": 1500,
+  "servo_span_us": 2000.0,
+  "max_steering_deg": 36.0
+}
+```
+
+You can still override frequently changed values from the command line. CLI
+arguments are applied after the config file is loaded.
 
 ## Build
 
@@ -137,30 +201,34 @@ Confirm the receiver port. In the current tested setup, the working port is
 ss -lunp | grep -E '9000|9003|9005|9991'
 ```
 
-If a process is listening on `0.0.0.0:9005`, use `--udp-port 9005`.
+If a process is listening on `0.0.0.0:9005`, set `udp.port` to `9005`.
 
 ### 2. Start VirtualBridge
 
-Example that matched the tested board chain:
+With the default config, start VirtualBridge without long startup arguments:
 
 ```bash
 cd ~/Desktop/VirtualBridge
-
-./build/virtual_aruco_bridge \
-  --control-bind 127.0.0.1 \
-  --control-port 8899 \
-  --udp-host 127.0.0.1 \
-  --udp-port 9005 \
-  --initial-world-x-mm 315 \
-  --initial-world-y-mm 1077 \
-  --initial-heading-deg 350
+./build/virtual_aruco_bridge
 ```
 
 Important:
 
-- `--control-port 8899` must match `XSmart_Car_LineFollower`'s `control_bridge.port`.
-- `--udp-host` and `--udp-port` must point to the board-side positioning receiver.
+- `control.port` must match `XSmart_Car_LineFollower`'s `control_bridge.port`.
+- `udp.host` and `udp.port` must point to the board-side positioning receiver.
 - Do not start `icar_socket_bridge` at the same time.
+
+For temporary changes, either pass a different config:
+
+```bash
+./build/virtual_aruco_bridge --config config/my_car.json
+```
+
+or override a few values:
+
+```bash
+./build/virtual_aruco_bridge --udp-port 9005 --initial-heading-deg 350
+```
 
 ### 3. Start XSmart_Car_LineFollower
 
@@ -182,24 +250,19 @@ cd ~/Desktop/XSmart_Car_LineFollower
 
 ## Initial Pose
 
-Initial pose is configured with:
+Initial pose is configured in `config/virtual_bridge.json`:
 
-```bash
---initial-world-x-mm <mm>
---initial-world-y-mm <mm>
---initial-heading-deg <deg>
+```jsonc
+"initial_pose": {
+  "world_x_mm": 315.0,
+  "world_y_mm": 1077.0,
+  "heading_deg": 350.0
+}
 ```
 
 These values describe the localization point, not the rear axle center. The
-localization point is the point `0.075 m` in front of the rear axle center.
-
-Example:
-
-```bash
---initial-world-x-mm 315 \
---initial-world-y-mm 1077 \
---initial-heading-deg 350
-```
+localization point is the point `vehicle.pose_offset_m` in front of the rear
+axle center.
 
 The first two values use ArUco field coordinates in millimeters. The heading is
 the virtual vehicle front direction in the ArUco world XY plane.
@@ -213,6 +276,12 @@ Example:
 ```text
 old ArUco raw yaw_deg = 170
 VirtualBridge initial heading = 170 + 180 = 350
+```
+
+The same correction in config is:
+
+```jsonc
+"heading_deg": 350.0
 ```
 
 ## Coordinate Output
@@ -229,16 +298,20 @@ robot_position.euler[1] = heading_deg
 
 Equivalent defaults:
 
-```bash
---pos-x-source world_y
---pos-z-source world_x
---height-m 0.16
---yaw-offset-deg 0
---yaw-sign 1
+```jsonc
+"robot_position": {
+  "height_m": 0.16,
+  "pos_x_source": "world_y",
+  "pos_x_sign": 1.0,
+  "pos_z_source": "world_x",
+  "pos_z_sign": 1.0,
+  "yaw_offset_deg": 0.0,
+  "yaw_sign": 1.0
+}
 ```
 
-If a receiver expects a different coordinate convention, override these at
-startup.
+If a receiver expects a different coordinate convention, edit these values or
+override them at startup.
 
 ## Control Input
 
@@ -276,43 +349,19 @@ Show CLI options:
 Run with reversed steering polarity:
 
 ```bash
-./build/virtual_aruco_bridge \
-  --control-bind 127.0.0.1 \
-  --control-port 8899 \
-  --udp-host 127.0.0.1 \
-  --udp-port 9005 \
-  --initial-world-x-mm 315 \
-  --initial-world-y-mm 1077 \
-  --initial-heading-deg 350 \
-  --steering-sign -1
+./build/virtual_aruco_bridge --steering-sign -1
 ```
 
 Run with slower simulated speed:
 
 ```bash
-./build/virtual_aruco_bridge \
-  --control-bind 127.0.0.1 \
-  --control-port 8899 \
-  --udp-host 127.0.0.1 \
-  --udp-port 9005 \
-  --initial-world-x-mm 315 \
-  --initial-world-y-mm 1077 \
-  --initial-heading-deg 350 \
-  --speed-scale 0.7
+./build/virtual_aruco_bridge --speed-scale 0.7
 ```
 
 Run quietly:
 
 ```bash
-./build/virtual_aruco_bridge \
-  --control-bind 127.0.0.1 \
-  --control-port 8899 \
-  --udp-host 127.0.0.1 \
-  --udp-port 9005 \
-  --initial-world-x-mm 315 \
-  --initial-world-y-mm 1077 \
-  --initial-heading-deg 350 \
-  --quiet
+./build/virtual_aruco_bridge --quiet
 ```
 
 ## Troubleshooting
@@ -339,40 +388,40 @@ Check the UDP receiver port:
 ss -lunp | grep -E '9000|9003|9005|9991'
 ```
 
-Then make `--udp-port` match the actual receiver. In the tested chain, `9005`
-is the working port.
+Then make `udp.port` match the actual receiver. In the tested chain, `9005` is
+the working port.
 
 ### Virtual car moves backward
 
 Most likely the initial heading is 180 degrees off.
 
 If you copied a raw ArUco `yaw_deg`, add `180` before passing it as
-`--initial-heading-deg`.
+`initial_pose.heading_deg`.
 
 Example:
 
 ```text
-wrong: --initial-heading-deg 170
-right: --initial-heading-deg 350
+wrong: "heading_deg": 170.0
+right: "heading_deg": 350.0
 ```
 
 ### Virtual car turns opposite direction
 
 Use:
 
-```bash
---steering-sign -1
+```jsonc
+"steering_sign": -1.0
 ```
 
 ### Route tracking is directionally correct but not close enough
 
 Tune:
 
-```bash
---speed-scale
---speed-tau-s
---max-accel-mps2
---max-steering-deg
+```text
+vehicle.speed_scale
+vehicle.speed_tau_s
+vehicle.max_accel_mps2
+vehicle.max_steering_deg
 ```
 
 The current model is a low-speed kinematic model, not a full physical tire and

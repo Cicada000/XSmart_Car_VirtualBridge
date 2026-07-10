@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(virtual_bridge_core
+  src/AppConfig.cpp
   src/ControlFrame.cpp
   src/RobotPositionJson.cpp
   src/VehicleModel.cpp
@@ -27,3 +28,6 @@ add_executable(virtual_bridge_tests
 )
 target_link_libraries(virtual_bridge_tests PRIVATE virtual_bridge_core)
 add_test(NAME virtual_bridge_tests COMMAND virtual_bridge_tests)
+set_tests_properties(virtual_bridge_tests PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
