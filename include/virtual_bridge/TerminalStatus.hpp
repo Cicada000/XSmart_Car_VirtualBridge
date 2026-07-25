@@ -21,6 +21,7 @@ struct TerminalStatus {
     ControlCommand command;
     std::uint64_t commandFrames = 0;
     std::uint64_t udpSendErrors = 0;
+    bool physicsEnabled = false;
 };
 
 std::string buildStatusPanel(const TerminalStatus& status);

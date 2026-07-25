@@ -9,6 +9,7 @@ std::string buildStatusPanel(const TerminalStatus& status) {
     std::ostringstream out;
     out << std::fixed << std::setprecision(3);
     out << "VirtualBridge\n";
+    out << "physics_mode: " << (status.physicsEnabled ? "enhanced" : "legacy") << "\n";
     out << "config: " << status.configPath << "\n";
     out << "control_tcp: " << status.controlBindIp << ":" << status.controlPort
         << " " << (status.controlConnected ? "connected" : "waiting") << "\n";

@@ -359,6 +359,36 @@ void testBuildsAnsiTuiFrames() {
     assert(virtual_bridge::buildTuiShutdownFrame() == "\x1b[?25h\n");
 }
 
+void testPhysicsEnhancementsToggleAndDeadband() {
+    virtual_bridge::VehicleParameters params;
+    params.speedTimeConstantS = 0.0;
+    params.maxAccelMps2 = 100.0;
+    params.servoSecPer60Deg = 0.0;
+
+    // 1. 开关为 false 时（旧模式）：低速指令能正常起步
+    params.physics.enabled = false;
+    params.physics.minStartSpeedMps = 0.10;
+    virtual_bridge::VehicleModel legacyModel(params);
+    legacyModel.update({0.05f, 1500}, 0.5);
+    assert(legacyModel.rearAxlePose().speedMps > 0.04);
+
+    // 2. 开关为 true 时（物理增强模式）：低于死区速度不动作
+    params.physics.enabled = true;
+    virtual_bridge::VehicleModel enhancedModel(params);
+    enhancedModel.update({0.05f, 1500}, 0.5);
+    assert(enhancedModel.rearAxlePose().speedMps == 0.0);
+
+    // 高于死区速度可正常起步
+    enhancedModel.update({0.20f, 1500}, 0.5);
+    assert(enhancedModel.rearAxlePose().speedMps > 0.15);
+
+    // 3. 验证舵机死区
+    params.physics.servoDeadbandUs = 15.0;
+    params.physics.servoTrimUs = 10; // 有效中位 1510
+    // 脉宽 1520 在死区 [1495, 1525] 范围之内 -> 转向角为 0
+    assert(std::fabs(virtual_bridge::servoPulseToSteeringRad(1520, params)) < 1e-9);
+}
+
 } // namespace
 
 int main() {
@@ -376,5 +406,6 @@ int main() {
     testRejectsInvalidCoordinateSourceInConfig();
     testBuildsStatusPanelForTerminalRefresh();
     testBuildsAnsiTuiFrames();
+    testPhysicsEnhancementsToggleAndDeadband();
     return 0;
 }

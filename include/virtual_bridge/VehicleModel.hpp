@@ -6,6 +6,18 @@
 
 namespace virtual_bridge {
 
+struct PhysicsEnhancementsConfig {
+    bool enabled = false;
+    double vehicleMassKg = 1.25;
+    double minStartSpeedMps = 0.06;
+    double coastingDecelMps2 = 0.8;
+    int servoTrimUs = 0;
+    double servoDeadbandUs = 12.0;
+    double sensorLatencyMs = 40.0;
+    double positionNoiseM = 0.002;
+    double yawNoiseDeg = 0.3;
+};
+
 struct VehicleParameters {
     double wheelbaseM = 0.20;
     double rearTrackM = 0.155;
@@ -20,6 +32,7 @@ struct VehicleParameters {
     double maxAccelMps2 = 3.0;
     bool clampNegativeSpeed = true;
     double maxDtS = 0.20;
+    PhysicsEnhancementsConfig physics;
 };
 
 struct PosePoint {

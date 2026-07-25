@@ -36,7 +36,22 @@ double normalizeRadians(double radians) {
 
 double servoPulseToSteeringRad(std::uint16_t pulseUs, const VehicleParameters& params) {
     const double span = params.servoPulseSpanUs > 1e-9 ? params.servoPulseSpanUs : 2000.0;
-    const double rawDeg = (static_cast<double>(pulseUs) - static_cast<double>(params.servoMidPulseUs)) *
+    double effectiveMid = static_cast<double>(params.servoMidPulseUs);
+
+    if (params.physics.enabled) {
+        effectiveMid += static_cast<double>(params.physics.servoTrimUs);
+        const double diffUs = static_cast<double>(pulseUs) - effectiveMid;
+        if (std::abs(diffUs) <= params.physics.servoDeadbandUs) {
+            return 0.0;
+        }
+        const double sign = diffUs > 0 ? 1.0 : -1.0;
+        const double activeDiff = (std::abs(diffUs) - params.physics.servoDeadbandUs) * sign;
+        const double rawDeg = activeDiff * 180.0 / span * params.steeringSign;
+        const double limitedDeg = clamp(rawDeg, -std::abs(params.maxSteeringDeg), std::abs(params.maxSteeringDeg));
+        return degreesToRadians(limitedDeg);
+    }
+
+    const double rawDeg = (static_cast<double>(pulseUs) - effectiveMid) *
                           180.0 / span * params.steeringSign;
     const double limitedDeg = clamp(rawDeg, -std::abs(params.maxSteeringDeg), std::abs(params.maxSteeringDeg));
     return degreesToRadians(limitedDeg);
@@ -57,20 +72,65 @@ void VehicleModel::update(const ControlCommand& command, double dtS) {
     if (dtS <= 0.0) return;
     if (params_.maxDtS > 0.0) dtS = std::min(dtS, params_.maxDtS);
 
+    if (!params_.physics.enabled) {
+        // --- 沿用经典老版本理想模拟逻辑 ---
+        double targetSpeed = static_cast<double>(command.speedMps) * params_.speedScale;
+        if (params_.clampNegativeSpeed) targetSpeed = std::max(0.0, targetSpeed);
+
+        double desiredSpeed = targetSpeed;
+        if (params_.speedTimeConstantS > 1e-9) {
+            const double alpha = 1.0 - std::exp(-dtS / params_.speedTimeConstantS);
+            desiredSpeed = state_.speedMps + (targetSpeed - state_.speedMps) * alpha;
+        }
+        if (params_.maxAccelMps2 > 0.0) {
+            state_.speedMps = moveToward(state_.speedMps, desiredSpeed, params_.maxAccelMps2 * dtS);
+        } else {
+            state_.speedMps = desiredSpeed;
+        }
+
+        const double targetSteering = servoPulseToSteeringRad(command.servoPulseUs, params_);
+        if (params_.servoSecPer60Deg > 1e-9) {
+            const double servoRateRadPerS = degreesToRadians(60.0 / params_.servoSecPer60Deg);
+            state_.steeringRad = moveToward(state_.steeringRad, targetSteering, servoRateRadPerS * dtS);
+        } else {
+            state_.steeringRad = targetSteering;
+        }
+
+        const double wheelbase = std::max(1e-6, params_.wheelbaseM);
+        const double yawRate = state_.speedMps / wheelbase * std::tan(state_.steeringRad);
+        state_.worldXM += state_.speedMps * std::cos(state_.headingRad) * dtS;
+        state_.worldYM += state_.speedMps * std::sin(state_.headingRad) * dtS;
+        state_.headingRad = normalizeRadians(state_.headingRad + yawRate * dtS);
+        return;
+    }
+
+    // --- 新版本基于物理增强的模拟逻辑 ---
     double targetSpeed = static_cast<double>(command.speedMps) * params_.speedScale;
     if (params_.clampNegativeSpeed) targetSpeed = std::max(0.0, targetSpeed);
 
-    double desiredSpeed = targetSpeed;
-    if (params_.speedTimeConstantS > 1e-9) {
-        const double alpha = 1.0 - std::exp(-dtS / params_.speedTimeConstantS);
-        desiredSpeed = state_.speedMps + (targetSpeed - state_.speedMps) * alpha;
-    }
-    if (params_.maxAccelMps2 > 0.0) {
-        state_.speedMps = moveToward(state_.speedMps, desiredSpeed, params_.maxAccelMps2 * dtS);
-    } else {
-        state_.speedMps = desiredSpeed;
+    // 1. 电机起步死区：低于 minStartSpeedMps 时动力输出为 0
+    if (std::abs(targetSpeed) < params_.physics.minStartSpeedMps) {
+        targetSpeed = 0.0;
     }
 
+    // 2. 区分松油门自然滑行减速与主动驱动/刹车
+    if (targetSpeed == 0.0 && state_.speedMps > 0.0) {
+        const double decel = params_.physics.coastingDecelMps2 > 0.0 ? params_.physics.coastingDecelMps2 : 0.8;
+        state_.speedMps = std::max(0.0, state_.speedMps - decel * dtS);
+    } else {
+        double desiredSpeed = targetSpeed;
+        if (params_.speedTimeConstantS > 1e-9) {
+            const double alpha = 1.0 - std::exp(-dtS / params_.speedTimeConstantS);
+            desiredSpeed = state_.speedMps + (targetSpeed - state_.speedMps) * alpha;
+        }
+        if (params_.maxAccelMps2 > 0.0) {
+            state_.speedMps = moveToward(state_.speedMps, desiredSpeed, params_.maxAccelMps2 * dtS);
+        } else {
+            state_.speedMps = desiredSpeed;
+        }
+    }
+
+    // 3. 舵机中位偏置与死区响应
     const double targetSteering = servoPulseToSteeringRad(command.servoPulseUs, params_);
     if (params_.servoSecPer60Deg > 1e-9) {
         const double servoRateRadPerS = degreesToRadians(60.0 / params_.servoSecPer60Deg);
@@ -79,10 +139,13 @@ void VehicleModel::update(const ControlCommand& command, double dtS) {
         state_.steeringRad = targetSteering;
     }
 
+    // 4. 中点法 (Midpoint Method / RK2) 轨迹积分
     const double wheelbase = std::max(1e-6, params_.wheelbaseM);
     const double yawRate = state_.speedMps / wheelbase * std::tan(state_.steeringRad);
-    state_.worldXM += state_.speedMps * std::cos(state_.headingRad) * dtS;
-    state_.worldYM += state_.speedMps * std::sin(state_.headingRad) * dtS;
+    const double midHeadingRad = state_.headingRad + 0.5 * yawRate * dtS;
+
+    state_.worldXM += state_.speedMps * std::cos(midHeadingRad) * dtS;
+    state_.worldYM += state_.speedMps * std::sin(midHeadingRad) * dtS;
     state_.headingRad = normalizeRadians(state_.headingRad + yawRate * dtS);
 }
 

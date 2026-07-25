@@ -373,6 +373,18 @@ AppConfig loadAppConfigFile(const std::string& path) {
     config.vehicle.clampNegativeSpeed = getBool(vehicle, "clamp_negative_speed", config.vehicle.clampNegativeSpeed);
     config.vehicle.maxDtS = getNumber(vehicle, "max_dt_s", config.vehicle.maxDtS);
 
+    const JsonValue* physics = objectMember(root, "physics_enhancements");
+    if (!physics) physics = objectMember(root, "physics");
+    config.vehicle.physics.enabled = getBool(physics, "enabled", config.vehicle.physics.enabled);
+    config.vehicle.physics.vehicleMassKg = getNumber(physics, "vehicle_mass_kg", config.vehicle.physics.vehicleMassKg);
+    config.vehicle.physics.minStartSpeedMps = getNumber(physics, "min_start_speed_mps", config.vehicle.physics.minStartSpeedMps);
+    config.vehicle.physics.coastingDecelMps2 = getNumber(physics, "coasting_decel_mps2", config.vehicle.physics.coastingDecelMps2);
+    config.vehicle.physics.servoTrimUs = getInt(physics, "servo_trim_us", config.vehicle.physics.servoTrimUs);
+    config.vehicle.physics.servoDeadbandUs = getNumber(physics, "servo_deadband_us", config.vehicle.physics.servoDeadbandUs);
+    config.vehicle.physics.sensorLatencyMs = getNumber(physics, "sensor_latency_ms", config.vehicle.physics.sensorLatencyMs);
+    config.vehicle.physics.positionNoiseM = getNumber(physics, "position_noise_m", config.vehicle.physics.positionNoiseM);
+    config.vehicle.physics.yawNoiseDeg = getNumber(physics, "yaw_noise_deg", config.vehicle.physics.yawNoiseDeg);
+
     const JsonValue* robotPosition = objectMember(root, "robot_position");
     config.robotPosition.heightM = getNumber(robotPosition, "height_m", config.robotPosition.heightM);
     config.robotPosition.posXSource = getCoordinateSource(
@@ -461,6 +473,10 @@ void applyCommandLineOverrides(AppConfig& config, const std::vector<std::string>
             config.vehicle.clampNegativeSpeed = false;
         } else if (arg == "--max-dt-s") {
             config.vehicle.maxDtS = parseDoubleArg(need("--max-dt-s"), "max dt");
+        } else if (arg == "--enable-physics") {
+            config.vehicle.physics.enabled = true;
+        } else if (arg == "--disable-physics") {
+            config.vehicle.physics.enabled = false;
         } else if (arg == "--quiet") {
             config.quiet = true;
         } else {

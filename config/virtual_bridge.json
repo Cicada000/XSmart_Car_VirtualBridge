@@ -56,6 +56,27 @@
     "max_dt_s": 0.20
   },
 
+  // 物理增强模拟选项（设为 false 时沿用经典理想模拟逻辑；设为 true 时开启基于易测量实车参数的仿真）
+  "physics_enhancements": {
+    "enabled": false,
+    // 小车整备质量 (kg)，用于质量惯性响应，默认 1.25 kg
+    "vehicle_mass_kg": 1.25,
+    // 电机起步速度死区 (m/s)，低于此速度指令小车不动，模拟静摩擦克服过程
+    "min_start_speed_mps": 0.06,
+    // 松油门 (指令为0) 时的自然机械滑行减速度 (m/s^2)，默认 0.8 m/s^2
+    "coasting_decel_mps2": 0.8,
+    // 舵机中位微调偏置 (us)，在基准中位上的偏置
+    "servo_trim_us": 0,
+    // 舵机机械死区 (us)，在该脉宽变化范围内前轮不动作，默认 12 us
+    "servo_deadband_us": 12.0,
+    // 定位传感器传输与图像处理延迟 (ms)，默认 40 ms
+    "sensor_latency_ms": 40.0,
+    // 定位位置高频随机抖动标准差 (m)，默认 0.002 m (2 mm)
+    "position_noise_m": 0.002,
+    // 定位角度高频随机抖动标准差 (deg)，默认 0.3 deg
+    "yaw_noise_deg": 0.3
+  },
+
   // ArucoCalibCpp 兼容的 robot_position 输出坐标约定。
   "robot_position": {
     "height_m": 0.16,

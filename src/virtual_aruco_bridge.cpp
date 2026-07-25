@@ -12,10 +12,12 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <iostream>
 #include <mutex>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <sys/select.h>
@@ -28,6 +30,57 @@
 namespace {
 
 std::atomic_bool g_running{true};
+
+class PoseSensorPipeline {
+public:
+    PoseSensorPipeline() : rng_(1337) {}
+
+    virtual_bridge::PosePoint process(const virtual_bridge::PosePoint& currentPose,
+                                     const virtual_bridge::PhysicsEnhancementsConfig& physics,
+                                     std::int64_t nowNs) {
+        if (!physics.enabled) {
+            return currentPose;
+        }
+
+        virtual_bridge::PosePoint basePose = currentPose;
+        if (physics.sensorLatencyMs > 0.0) {
+            history_.push_back({nowNs, currentPose});
+            const std::int64_t latencyNs = static_cast<std::int64_t>(physics.sensorLatencyMs * 1e6);
+            const std::int64_t targetNs = nowNs - latencyNs;
+
+            while (history_.size() > 1 && history_[1].timeNs <= targetNs) {
+                history_.pop_front();
+            }
+            if (!history_.empty()) {
+                basePose = history_.front().pose;
+            }
+        }
+
+        virtual_bridge::PosePoint outputPose = basePose;
+        if (physics.positionNoiseM > 1e-9) {
+            std::normal_distribution<double> posDist(0.0, physics.positionNoiseM);
+            outputPose.worldXM += posDist(rng_);
+            outputPose.worldYM += posDist(rng_);
+        }
+        if (physics.yawNoiseDeg > 1e-9) {
+            std::normal_distribution<double> yawDist(0.0, physics.yawNoiseDeg);
+            outputPose.headingDeg += yawDist(rng_);
+        }
+        return outputPose;
+    }
+
+    void reset() {
+        history_.clear();
+    }
+
+private:
+    struct TimestampedPose {
+        std::int64_t timeNs;
+        virtual_bridge::PosePoint pose;
+    };
+    std::deque<TimestampedPose> history_;
+    std::mt19937 rng_;
+};
 
 class TerminalRawGuard {
 public:
@@ -307,6 +360,8 @@ int main(int argc, char** argv) {
         bool firstTuiFrame = true;
         std::uint64_t udpSendErrors = 0;
 
+        PoseSensorPipeline sensorPipeline;
+
         auto makeStatus = [&]() {
             const SharedCommandSnapshot snapshot = latestCommand(shared);
             virtual_bridge::TerminalStatus status;
@@ -322,6 +377,7 @@ int main(int argc, char** argv) {
             status.command = snapshot.command;
             status.commandFrames = snapshot.frameCount;
             status.udpSendErrors = udpSendErrors;
+            status.physicsEnabled = options.vehicle.physics.enabled;
             return status;
         };
 
@@ -336,6 +392,7 @@ int main(int argc, char** argv) {
                             options.initialWorldXmm * 0.001,
                             options.initialWorldYmm * 0.001,
                             options.initialHeadingDeg);
+                        sensorPipeline.reset();
                         if (!options.quiet && !useTui) {
                             std::cout << "[reset] pose reset to initial: x_mm="
                                       << options.initialWorldXmm << " y_mm="
@@ -354,9 +411,11 @@ int main(int argc, char** argv) {
 
             const SharedCommandSnapshot snapshot = latestCommand(shared);
             model.update(snapshot.command, dtS);
-            const virtual_bridge::PosePoint pose = model.posePoint();
+            const std::int64_t nowNs = monotonicNowNs();
+            const virtual_bridge::PosePoint pose = sensorPipeline.process(
+                model.posePoint(), options.vehicle.physics, nowNs);
             const std::string payload =
-                virtual_bridge::buildRobotPositionJson(pose, options.robotPosition, monotonicNowNs());
+                virtual_bridge::buildRobotPositionJson(pose, options.robotPosition, nowNs);
             const ssize_t sent = ::sendto(
                 udpFd,
                 payload.data(),

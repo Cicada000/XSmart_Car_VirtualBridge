@@ -132,8 +132,33 @@ config/virtual_bridge.json
 - `udp`：`robot_position` UDP 输出目标。
 - `initial_pose`：初始定位点和车头朝向。
 - `vehicle`：轴距、轮距、定位点偏移、舵机 PWM 映射和速度响应参数。
+- `physics_enhancements`：基于易收集实车物理参数的增强仿真选项（带模式切换开关 `enabled`）。
 - `robot_position`：输出坐标映射和 yaw 约定。
 - `runtime`：运行时显示行为。
+
+### 物理模拟模式选择
+
+通过 `config/virtual_bridge.json` 中的 `physics_enhancements.enabled` 开关可在两种模拟模式之间自由切换：
+
+- **`enabled: false`（默认/经典模式）**：沿用老版本的理想几何运动学模型（无电机死区、无自然滑行摩擦、理想舵机中位与无迟滞传输）。适合快速闭环验证基础逻辑。
+- **`enabled: true`（物理增强模式）**：启用包含电机起步死区、松油门自然滑行减速、舵机中位偏置与死区、传感器传输延迟以及高频定位抖动在内的逼真仿真，所有参数均可通过电子秤、直尺等简单手段收集测量。
+
+```jsonc
+"physics_enhancements": {
+  // 设为 false 沿用经典理想模拟；设为 true 开启基于实车物理参数的物理仿真
+  "enabled": true,
+  "vehicle_mass_kg": 1.25,        // 整备质量 (kg)
+  "min_start_speed_mps": 0.06,    // 电机起步速度死区 (m/s)
+  "coasting_decel_mps2": 0.8,     // 松油门自然机械滑行减速度 (m/s^2)
+  "servo_trim_us": 0,             // 舵机中位偏置 (us)
+  "servo_deadband_us": 12.0,      // 舵机机械死区 (us)
+  "sensor_latency_ms": 40.0,      // 定位传输与处理延迟 (ms)
+  "position_noise_m": 0.002,      // 定位坐标高频抖动标准差 (m)
+  "yaw_noise_deg": 0.3            // 定位角度高频抖动标准差 (deg)
+}
+```
+
+也可以通过命令行参数 `--enable-physics` 或 `--disable-physics` 临时覆盖配置中的开关。
 
 当前已验证链路的默认值：
 
