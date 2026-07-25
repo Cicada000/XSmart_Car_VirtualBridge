@@ -20,6 +20,7 @@
 #include <string>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <termios.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -27,6 +28,36 @@
 namespace {
 
 std::atomic_bool g_running{true};
+
+class TerminalRawGuard {
+public:
+    TerminalRawGuard() {
+        if (::isatty(STDIN_FILENO)) {
+            if (::tcgetattr(STDIN_FILENO, &oldTerm_) == 0) {
+                termios newTerm = oldTerm_;
+                newTerm.c_lflag &= ~(ICANON | ECHO);
+                newTerm.c_cc[VMIN] = 0;
+                newTerm.c_cc[VTIME] = 0;
+                if (::tcsetattr(STDIN_FILENO, TCSANOW, &newTerm) == 0) {
+                    active_ = true;
+                }
+            }
+        }
+    }
+
+    ~TerminalRawGuard() {
+        if (active_) {
+            ::tcsetattr(STDIN_FILENO, TCSANOW, &oldTerm_);
+        }
+    }
+
+    TerminalRawGuard(const TerminalRawGuard&) = delete;
+    TerminalRawGuard& operator=(const TerminalRawGuard&) = delete;
+
+private:
+    termios oldTerm_{};
+    bool active_ = false;
+};
 
 struct SharedCommand {
     std::mutex mutex;
@@ -294,7 +325,29 @@ int main(int argc, char** argv) {
             return status;
         };
 
+        TerminalRawGuard rawGuard;
+
         while (g_running.load()) {
+            if (::isatty(STDIN_FILENO)) {
+                char ch;
+                while (::read(STDIN_FILENO, &ch, 1) > 0) {
+                    if (ch == 'r' || ch == 'R') {
+                        model.resetFromPosePoint(
+                            options.initialWorldXmm * 0.001,
+                            options.initialWorldYmm * 0.001,
+                            options.initialHeadingDeg);
+                        if (!options.quiet && !useTui) {
+                            std::cout << "[reset] pose reset to initial: x_mm="
+                                      << options.initialWorldXmm << " y_mm="
+                                      << options.initialWorldYmm << " heading_deg="
+                                      << options.initialHeadingDeg << "\n";
+                        }
+                    } else if (ch == 3) {
+                        g_running.store(false);
+                    }
+                }
+            }
+
             const auto now = std::chrono::steady_clock::now();
             const double dtS = std::chrono::duration<double>(now - last).count();
             last = now;

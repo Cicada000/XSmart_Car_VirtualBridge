@@ -2,10 +2,11 @@
 
 `VirtualBridge` 是 `XSmart_Car_LineFollower` 的虚拟下位机和虚拟定位桥接程序。它用于在没有真实小车、真实串口下位机和真实 ArUco 相机定位系统时，闭环测试上位机循线控制程序。
 
-程序负责两件事：
+程序负责三件事：
 
 1. 监听 `XSmart_Car_LineFollower` 原本发给 `icar_socket_bridge` 的 TCP 控制帧，解析速度和舵机 PWM。
 2. 使用低速车辆运动学模型积分出虚拟小车位置，并按 `ArucoCalibCpp` 兼容的 `robot_position` UDP 格式发送给板卡上的定位接收程序。
+3. 支持运行过程中随时按 **'R'** 键（或小写 **'r'**）将小车坐标与朝向快速重置为初始配置值，无需重启程序。
 
 虚拟闭环链路如下：
 
@@ -241,9 +242,18 @@ cd ~/Desktop/XSmart_Car_LineFollower
 
 使用 `--debug` 时必须加 `--debug-control`，否则 XSmart 程序会禁用桥接控制输出，VirtualBridge 收不到速度和舵机指令。
 
-## 终端显示
+## 终端显示与交互控制
 
 默认非静默模式下，如果程序运行在交互终端中，会显示一个固定位置刷新的状态面板，而不是持续追加日志行。
+
+### 快捷键控制
+
+程序在运行过程中支持以下键盘交互指令（无需按 Enter）：
+
+- **`R` 或 `r`**：将虚拟小车的坐标 ($x, y$) 和车头朝向 ($\theta$) 瞬间重置为启动时指定的初始位姿（包含配置文件或命令行参数传入的初始位姿），方便在循线或导航测试中重新开始，而无需重启程序。
+- **`Ctrl + C`**：优雅退出 VirtualBridge。
+
+### 状态面板
 
 状态面板包含：
 
@@ -329,23 +339,33 @@ robot_position.euler[1] = heading_deg
 
 如果接收端坐标约定不同，修改这些配置项即可。
 
-## 控制输入格式
+## 控制输入格式（接收下位机/上位机控制帧格式）
 
-VirtualBridge 监听和 `icar_socket_bridge` 相同的 11 字节控制帧：
+VirtualBridge 通过 TCP 服务器（默认端口 `8899`）接收来自 `XSmart_Car_LineFollower`（或虚拟下位机测试端）的控制指令。通信协议与真实下位机桥接程序 `icar_socket_bridge` 保持完全一致。
 
-```text
-byte 0       0x42
-byte 1       address = 1
-byte 2       length = 10
-byte 3..6    float32 little-endian speed_mps
-byte 7..8    uint16 little-endian servo_pulse_us
-byte 9       bytes 0..8 的校验和
-byte 10      原始帧布局中的保留字节
-```
+每条控制指令固定为 **11 字节** 二进制控制帧，布局如下：
 
-链路正常时，终端状态面板里的 `frames` 会持续增加，`servo` 会显示最新舵机 PWM。
+| 字节偏移 (Offset) | 数据类型 (Type) | 字段名 (Field) | 默认/固定值 | 描述 (Description) |
+|---|---|---|---|---|
+| `byte 0` | `uint8` | 帧头标志 (Header) | `0x42` | 帧起始标志字符 (`'B'`) |
+| `byte 1` | `uint8` | 设备地址 (Address) | `0x01` | 控制目标设备地址 (小车控制) |
+| `byte 2` | `uint8` | 数据长度 (Length) | `0x0A` (10) | 有效载荷及校验和总长度 |
+| `byte 3..6` | `float32` (LE) | 目标速度 (`speed_mps`) | 浮点数 | 小端序 (Little-Endian) IEEE 754 32位单精度浮点数，单位 `m/s` |
+| `byte 7..8` | `uint16` (LE) | 舵机脉宽 (`servo_pulse_us`) | 无符号整数 | 小端序 16位无符号整数，单位微秒 (`us`)，范围通常 `500..2500`，中位 `1500` |
+| `byte 9` | `uint8` | 校验和 (Checksum) | 8位累加和 | 前 9 个字节（`byte 0` 至 `byte 8`）的无符号累加和模 256 |
+| `byte 10` | `uint8` | 保留字节 (Reserved) | - | 原始协议结构保留字节（通常为 `0x00`） |
 
-如果 `frames=0`，说明还没有收到任何控制帧。
+### 校验和算法
+
+帧校验和通过计算前 9 个字节的无符号 8 位累加和得出：
+
+$$\text{checksum} = \left( \sum_{i=0}^{8} \text{byte}[i] \right) \pmod{256}$$
+
+### 帧解析规则
+
+- **字节流处理**：采用滑动窗口搜索帧头 `0x42`，即使发生 TCP 粘包或半包，程序也会自动提取合法帧。
+- **合法性校验**：必须满足 `byte 0 == 0x42`、`byte 1 == 0x01`、`byte 2 == 10`，且累加校验和与 `byte 9` 相匹配。
+- **显示确认**：链路正常时，终端状态面板里的 `frames` 计数会持续增加，`servo` 和 `speed` 会更新显示最新的控制参数。如果 `frames=0`，说明未收到有效帧，请检查 TCP 网络连接及发送端启动参数。
 
 ## 常用命令
 

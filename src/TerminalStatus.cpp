@@ -23,7 +23,7 @@ std::string buildStatusPanel(const TerminalStatus& status) {
         << " m/s servo=" << status.command.servoPulseUs
         << " frames=" << status.commandFrames << "\n";
     out << "udp_send_errors: " << status.udpSendErrors << "\n";
-    out << "Press Ctrl+C to exit.\n";
+    out << "Press 'R' to reset pose, Ctrl+C to exit.\n";
     return out.str();
 }
 

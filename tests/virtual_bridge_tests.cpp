@@ -97,6 +97,32 @@ void testStraightMotionPublishesOffsetPosePoint() {
     assert(std::fabs(pose.headingDeg - 0.0) < 1e-9);
 }
 
+void testResetFromPosePointRestoresInitialState() {
+    virtual_bridge::VehicleParameters params;
+    params.wheelbaseM = 0.20;
+    params.posePointForwardOffsetM = 0.075;
+    params.speedTimeConstantS = 0.0;
+    params.maxAccelMps2 = 100.0;
+    params.servoSecPer60Deg = 0.0;
+    params.maxSteeringDeg = 36.0;
+    params.maxDtS = 0.0;
+
+    virtual_bridge::VehicleModel model(params);
+    model.resetFromPosePoint(0.315, 1.077, 350.0);
+    model.update({1.0f, 1900}, 2.0);
+
+    // After moving, pose is no longer initial
+    const virtual_bridge::PosePoint movedPose = model.posePoint();
+    assert(std::fabs(movedPose.worldXM - 0.315) > 0.01 || std::fabs(movedPose.worldYM - 1.077) > 0.01);
+
+    // Reset back to initial
+    model.resetFromPosePoint(0.315, 1.077, 350.0);
+    const virtual_bridge::PosePoint resetPose = model.posePoint();
+    assert(std::fabs(resetPose.worldXM - 0.315) < 1e-9);
+    assert(std::fabs(resetPose.worldYM - 1.077) < 1e-9);
+    assert(std::fabs(virtual_bridge::normalizeRadians(virtual_bridge::degreesToRadians(resetPose.headingDeg - 350.0))) < 1e-9);
+}
+
 void testTurningMotionUsesBicycleYawRate() {
     virtual_bridge::VehicleParameters params;
     params.wheelbaseM = 0.20;
@@ -306,6 +332,7 @@ void testBuildsStatusPanelForTerminalRefresh() {
     const std::string panel = virtual_bridge::buildStatusPanel(status);
 
     assert(panel.find("VirtualBridge") != std::string::npos);
+    assert(panel.find("Press 'R' to reset pose, Ctrl+C to exit.") != std::string::npos);
     assert(panel.find("config/virtual_bridge.json") != std::string::npos);
     assert(panel.find("control_tcp: 127.0.0.1:8899 connected") != std::string::npos);
     assert(panel.find("udp_robot_position: 127.0.0.1:9005 @ 30.000 Hz") != std::string::npos);
@@ -339,6 +366,7 @@ int main() {
     testRejectsBadChecksum();
     testServoPulseMapsToFrontWheelAngle();
     testStraightMotionPublishesOffsetPosePoint();
+    testResetFromPosePointRestoresInitialState();
     testTurningMotionUsesBicycleYawRate();
     testBuildsArucoRobotPositionJson();
     testDefaultYawOffsetKeepsModelHeadingAlignedWithPublishedYaw();
