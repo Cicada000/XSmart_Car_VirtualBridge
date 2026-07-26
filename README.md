@@ -1,5 +1,9 @@
 # XSmart_Car_VirtualBridge
 
+> [!IMPORTANT]
+> **使用须知与仿真局限性说明**
+> 本项目仅提供在低速工况下的车辆运动学及基础物理特性（如起步死区、阻尼滑行、传输延迟与高频噪声）的近似模拟，**不能代替实际调车使用**。它适用于快速验证上位机控制算法逻辑、调试通信闭环链路，以及观察小车在较为理想或常规状态下的运行表现。
+
 `VirtualBridge` 是 `XSmart_Car_LineFollower` 的虚拟下位机和虚拟定位桥接程序。它用于在没有真实小车、真实串口下位机和真实 ArUco 相机定位系统时，闭环测试上位机循线控制程序。
 
 程序负责三件事：
@@ -8,15 +12,41 @@
 2. 使用低速车辆运动学模型积分出虚拟小车位置，并按 `ArucoCalibCpp` 兼容的 `robot_position` UDP 格式发送给板卡上的定位接收程序。
 3. 支持运行过程中随时按 **'R'** 键（或小写 **'r'**）将小车坐标与朝向快速重置为初始配置值，无需重启程序。
 
-虚拟闭环链路如下：
+虚拟闭环数据流向如下：
 
-```text
-XSmart_Car_LineFollower
-  -> TCP 127.0.0.1:8899 速度/舵机控制帧
-  -> VirtualBridge
-  -> UDP robot_position
-  -> setupUI / xverse_ar_engine / 现有位姿桥
-  -> XSmart_Car_LineFollower 接收同步位姿
+```mermaid
+flowchart TB
+    subgraph UpperComputer["上位机系统 (LineFollower)"]
+        A["XSmart_Car_LineFollower<br/>(循线控制与路径规划)"]
+    end
+
+    subgraph VirtualBridgeCore["VirtualBridge 虚拟下位机 & 仿真桥"]
+        direction TB
+        B["TCP Control Server<br/>(127.0.0.1:8899)"]
+        
+        subgraph Engine["物理仿真与传感器处理引擎"]
+            C["Control Frame Parser<br/>(解析 11 字节控制帧)"]
+            D["Vehicle Model<br/>(运动学积分 / RK2 中点法)"]
+            E["Physics & Sensor Pipeline<br/>(死区 / 阻尼 / 延迟 / 噪声)"]
+        end
+
+        F["UDP Publisher<br/>(127.0.0.1:9005)"]
+        G["Keyboard Listener<br/>(按 'R' 键快捷重置)"]
+    end
+
+    subgraph PositionReceiver["位姿接收端 (定位系统)"]
+        H["setupUI / xverse_ar_engine<br/>(位姿接收与显示)"]
+    end
+
+    %% 数据流向
+    A -- "TCP 127.0.0.1:8899<br/>[速度 speed_mps, 舵机 PWM]" --> B
+    B --> C
+    C --> D
+    D --> E
+    E -- "打包 robot_position JSON" --> F
+    F -- "UDP 127.0.0.1:9005<br/>[pos, euler, timestamp]" --> H
+    H -- "根据位置信息输出画面" --> A
+    G -. "按 'R' 键重置初始位姿" .-> D
 ```
 
 使用虚拟桥时，不要同时启动真实的 `icar_socket_bridge`。两个程序都会占用 `127.0.0.1:8899`，而且真实桥会把控制指令发到物理小车。
@@ -217,7 +247,7 @@ ctest --test-dir build --output-on-failure
 先启动板卡上负责接收 ArUco 定位数据的程序，并确认接收端口。当前已验证可用端口是 `9005`：
 
 ```bash
-ss -lunp | grep -E '9000|9003|9005|9991'
+ss -lunp | grep -E '9005'
 ```
 
 如果看到进程监听 `0.0.0.0:9005`，保持 `config/virtual_bridge.json` 中的 `udp.port` 为 `9005`。
@@ -249,23 +279,7 @@ cd ~/Desktop/VirtualBridge
 ./build/virtual_aruco_bridge --udp-port 9005 --initial-heading-deg 350
 ```
 
-### 3. 启动 XSmart_Car_LineFollower
-
-普通控制模式：
-
-```bash
-cd ~/Desktop/XSmart_Car_LineFollower
-./build/xsmart_car -d
-```
-
-带浏览器调试画面，并继续输出控制帧：
-
-```bash
-cd ~/Desktop/XSmart_Car_LineFollower
-./build/xsmart_car -d --debug --debug-control -w 8082
-```
-
-使用 `--debug` 时必须加 `--debug-control`，否则 XSmart 程序会禁用桥接控制输出，VirtualBridge 收不到速度和舵机指令。
+### 3. 启动上位机程序
 
 ## 终端显示与交互控制
 
@@ -370,15 +384,15 @@ VirtualBridge 通过 TCP 服务器（默认端口 `8899`）接收来自 `XSmart_
 
 每条控制指令固定为 **11 字节** 二进制控制帧，布局如下：
 
-| 字节偏移 (Offset) | 数据类型 (Type) | 字段名 (Field) | 默认/固定值 | 描述 (Description) |
-|---|---|---|---|---|
-| `byte 0` | `uint8` | 帧头标志 (Header) | `0x42` | 帧起始标志字符 (`'B'`) |
-| `byte 1` | `uint8` | 设备地址 (Address) | `0x01` | 控制目标设备地址 (小车控制) |
-| `byte 2` | `uint8` | 数据长度 (Length) | `0x0A` (10) | 有效载荷及校验和总长度 |
-| `byte 3..6` | `float32` (LE) | 目标速度 (`speed_mps`) | 浮点数 | 小端序 (Little-Endian) IEEE 754 32位单精度浮点数，单位 `m/s` |
-| `byte 7..8` | `uint16` (LE) | 舵机脉宽 (`servo_pulse_us`) | 无符号整数 | 小端序 16位无符号整数，单位微秒 (`us`)，范围通常 `500..2500`，中位 `1500` |
-| `byte 9` | `uint8` | 校验和 (Checksum) | 8位累加和 | 前 9 个字节（`byte 0` 至 `byte 8`）的无符号累加和模 256 |
-| `byte 10` | `uint8` | 保留字节 (Reserved) | - | 原始协议结构保留字节（通常为 `0x00`） |
+| 字节偏移 (Offset) | 数据类型 (Type) | 字段名 (Field)              | 默认/固定值 | 描述 (Description)                                                        |
+| ----------------- | --------------- | --------------------------- | ----------- | ------------------------------------------------------------------------- |
+| `byte 0`          | `uint8`         | 帧头标志 (Header)           | `0x42`      | 帧起始标志字符 (`'B'`)                                                    |
+| `byte 1`          | `uint8`         | 设备地址 (Address)          | `0x01`      | 控制目标设备地址 (小车控制)                                               |
+| `byte 2`          | `uint8`         | 数据长度 (Length)           | `0x0A` (10) | 有效载荷及校验和总长度                                                    |
+| `byte 3..6`       | `float32` (LE)  | 目标速度 (`speed_mps`)      | 浮点数      | 小端序 (Little-Endian) IEEE 754 32位单精度浮点数，单位 `m/s`              |
+| `byte 7..8`       | `uint16` (LE)   | 舵机脉宽 (`servo_pulse_us`) | 无符号整数  | 小端序 16位无符号整数，单位微秒 (`us`)，范围通常 `500..2500`，中位 `1500` |
+| `byte 9`          | `uint8`         | 校验和 (Checksum)           | 8位累加和   | 前 9 个字节（`byte 0` 至 `byte 8`）的无符号累加和模 256                   |
+| `byte 10`         | `uint8`         | 保留字节 (Reserved)         | -           | 原始协议结构保留字节（通常为 `0x00`）                                     |
 
 ### 校验和算法
 
@@ -439,7 +453,7 @@ ss -ltnp | grep 8899
 检查 UDP 接收端口：
 
 ```bash
-ss -lunp | grep -E '9000|9003|9005|9991'
+ss -lunp | grep -E '9005'
 ```
 
 然后让 `config/virtual_bridge.json` 中的 `udp.port` 匹配实际监听端口。当前已验证链路使用 `9005`。

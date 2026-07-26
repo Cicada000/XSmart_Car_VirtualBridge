@@ -3,10 +3,9 @@
   "control": {
     // 通常保持本机，因为 XSmart 和 VirtualBridge 运行在同一块板卡上。
     "bind_ip": "127.0.0.1",
-    // 必须和 XSmart_Car_LineFollower/config/xsmart_car.json 的 control_bridge.port 一致。
+    // 上位机与下位机的通信端口。
     "port": 8899
   },
-
   // UDP 定位输出目标，接收 ArucoCalibCpp 兼容的 robot_position 数据包。
   "udp": {
     // 已验证链路中 setupUI/xverse 接收端在本机。
@@ -14,9 +13,8 @@
     // 已验证链路中 9005 是可用接收端口。
     "port": 9005,
     // 虚拟定位数据发送频率。
-    "send_hz": 30.0
+    "send_hz": 90.0
   },
-
   // 初始定位点，使用 ArUco 世界坐标系。
   "initial_pose": {
     // 坐标单位是毫米。
@@ -25,7 +23,6 @@
     // 小车车头朝向。如果从旧 ArUco raw yaw 复制数值，需要先加 180 度。
     "heading_deg": 350.0
   },
-
   // 车辆几何尺寸和执行器响应参数。
   "vehicle": {
     // 前后轮轴距。
@@ -55,7 +52,6 @@
     // 程序卡顿或暂停后限制单步积分时间，避免位置突然跳变。
     "max_dt_s": 0.20
   },
-
   // 物理增强模拟选项（设为 false 时沿用经典理想模拟逻辑；设为 true 时开启基于易测量实车参数的仿真）
   "physics_enhancements": {
     "enabled": false,
@@ -76,10 +72,9 @@
     // 定位角度高频随机抖动标准差 (deg)，默认 0.3 deg
     "yaw_noise_deg": 0.3
   },
-
   // ArucoCalibCpp 兼容的 robot_position 输出坐标约定。
   "robot_position": {
-    "height_m": 0.16,
+    "height_m": 0.0,
     // 以下默认值匹配已验证的 ArucoCalibCpp 坐标映射。
     "pos_x_source": "world_y",
     "pos_x_sign": 1.0,
@@ -89,7 +84,6 @@
     "yaw_offset_deg": 0.0,
     "yaw_sign": 1.0
   },
-
   "runtime": {
     // 设为 true 可关闭周期性状态输出。
     "quiet": false
