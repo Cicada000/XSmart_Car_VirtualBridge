@@ -4,11 +4,11 @@
 > **使用须知与仿真局限性说明**
 > 本项目仅提供在低速工况下的车辆运动学及基础物理特性（如起步死区、阻尼滑行、传输延迟与高频噪声）的近似模拟，**不能代替实际调车使用**。它适用于快速验证上位机控制算法逻辑、调试通信闭环链路，以及观察小车在较为理想或常规状态下的运行表现。
 
-`VirtualBridge` 是 `XSmart_Car_LineFollower` 的虚拟下位机和虚拟定位桥接程序。它用于在没有真实小车、真实串口下位机和真实 ArUco 相机定位系统时，闭环测试上位机循线控制程序。
+`VirtualBridge` 是上位机循线控制程序的虚拟下位机和虚拟定位桥接程序。它用于在没有真实小车、真实串口下位机和真实 ArUco 相机定位系统时，闭环测试上位机循线控制算法与通信链路。
 
 程序负责三件事：
 
-1. 监听 `XSmart_Car_LineFollower` 原本发给 `icar_socket_bridge` 的 TCP 控制帧，解析速度和舵机 PWM。
+1. 监听上位机原本发送给下位机通信桥接程序的 TCP 控制帧，解析速度和舵机 PWM。
 2. 使用低速车辆运动学模型积分出虚拟小车位置，并按 `ArucoCalibCpp` 兼容的 `robot_position` UDP 格式发送给板卡上的定位接收程序。
 3. 支持运行过程中随时按 **'R'** 键（或小写 **'r'**）将小车坐标与朝向快速重置为初始配置值，无需重启程序。
 
@@ -16,8 +16,8 @@
 
 ```mermaid
 flowchart TB
-    subgraph UpperComputer["上位机系统 (LineFollower)"]
-        A["XSmart_Car_LineFollower<br/>(循线控制与路径规划)"]
+    subgraph UpperComputer["上位机系统"]
+        A["上位机循线程序，接收画面计算并控制下位机<br/>(循线控制与路径规划)"]
     end
 
     subgraph VirtualBridgeCore["VirtualBridge 虚拟下位机 & 仿真桥"]
@@ -49,7 +49,7 @@ flowchart TB
     G -. "按 'R' 键重置初始位姿" .-> D
 ```
 
-使用虚拟桥时，不要同时启动真实的 `icar_socket_bridge`。两个程序都会占用 `127.0.0.1:8899`，而且真实桥会把控制指令发到物理小车。
+使用虚拟桥时，不要同时启动真实的下位机通信桥接程序。两个程序都会占用 `127.0.0.1:8899`，而且真实桥接程序会把控制指令发到物理小车。
 
 ## 项目结构
 
@@ -80,11 +80,11 @@ VirtualBridge/
 
 - `AppConfig.hpp` / `AppConfig.cpp`
 
-  读取 `config/virtual_bridge.json`。配置格式是带 `//` 注释的 JSON，和 `XSmart_Car_LineFollower/config/xsmart_car.json` 的风格一致。
+  读取 `config/virtual_bridge.json`。配置格式是带 `//` 注释的 JSON 风格。
 
 - `ControlFrame.hpp` / `ControlFrame.cpp`
 
-  解析 `XSmart_Car_LineFollower` 输出的 11 字节二进制控制帧，帧内包含 `float speed_mps` 和 `uint16 servo_pulse_us`。
+  解析上位机输出的 11 字节二进制控制帧，帧内包含 `float speed_mps` 和 `uint16 servo_pulse_us`。
 
 - `VehicleModel.hpp` / `VehicleModel.cpp`
 
@@ -95,7 +95,7 @@ VirtualBridge/
   生成 `ArucoCalibCpp` 兼容的 UDP JSON 数据：
 
   ```json
-  {"type":"robot_position","pos":[x,0.160000,z],"euler":[0.0,yaw,0.0],"t_aruco_emit_ns":123}
+  {"type":"robot_position","pos":[x,0.0000,z],"euler":[0.0,yaw,0.0],"t_aruco_emit_ns":123}
   ```
 
 - `TerminalStatus.hpp` / `TerminalStatus.cpp`
@@ -122,7 +122,7 @@ VirtualBridge/
 - 舵机脉宽范围：`2000 us`，对应 `500..2500 us` 的 `0..180 deg`。
 - 前轮最大转角：`36 deg`。
 - 舵机速度模型：`0.16 s / 60 deg`。
-- 默认定位高度：`0.16 m`。
+- 默认定位高度：`0.0 m`。
 
 这个模型适合：
 
@@ -158,7 +158,7 @@ config/virtual_bridge.json
 
 配置文件是带注释的 JSON，支持 `//` 注释。常用配置段如下：
 
-- `control`：TCP 控制端点，供 `XSmart_Car_LineFollower` 连接。
+- `control`：TCP 控制端点，供上位机循线控制程序连接。
 - `udp`：`robot_position` UDP 输出目标。
 - `initial_pose`：初始定位点和车头朝向。
 - `vehicle`：轴距、轮距、定位点偏移、舵机 PWM 映射和速度响应参数。
@@ -200,7 +200,7 @@ config/virtual_bridge.json
 "udp": {
   "host": "127.0.0.1",
   "port": 9005,
-  "send_hz": 30.0
+  "send_hz": 90.0
 },
 "initial_pose": {
   "world_x_mm": 315.0,
@@ -263,9 +263,9 @@ cd ~/Desktop/VirtualBridge
 
 注意：
 
-- `control.port` 必须和 `XSmart_Car_LineFollower/config/xsmart_car.json` 的 `control_bridge.port` 一致。
+- `control.port` 必须与上位机发出的 TCP 控制端口保持一致。
 - `udp.host` 和 `udp.port` 必须指向板卡上的位姿接收端。
-- 不要同时启动真实的 `icar_socket_bridge`。
+- 不要同时启动真实的下位机通信桥接程序。
 
 如果要临时使用其他配置文件：
 
@@ -366,7 +366,7 @@ robot_position.euler[1] = heading_deg
 
 ```jsonc
 "robot_position": {
-  "height_m": 0.16,
+  "height_m": 0.0,
   "pos_x_source": "world_y",
   "pos_x_sign": 1.0,
   "pos_z_source": "world_x",
@@ -380,7 +380,7 @@ robot_position.euler[1] = heading_deg
 
 ## 控制输入格式（接收下位机/上位机控制帧格式）
 
-VirtualBridge 通过 TCP 服务器（默认端口 `8899`）接收来自 `XSmart_Car_LineFollower`（或虚拟下位机测试端）的控制指令。通信协议与真实下位机桥接程序 `icar_socket_bridge` 保持完全一致。
+VirtualBridge 通过 TCP 服务器（默认端口 `8899`）接收来自上位机循线程序（或测试端）的控制指令。通信协议与下位机通信桥接程序保持完全一致。
 
 每条控制指令固定为 **11 字节** 二进制控制帧，布局如下：
 
@@ -436,7 +436,7 @@ $$\text{checksum} = \left( \sum_{i=0}^{8} \text{byte}[i] \right) \pmod{256}$$
 
 ### 状态面板里 `frames=0`
 
-说明 `XSmart_Car_LineFollower` 还没有连接到 `127.0.0.1:8899`，或连接后没有发送控制帧。
+说明上位机程序还没有连接到 `127.0.0.1:8899`，或连接后没有发送控制帧。
 
 检查监听端口：
 
@@ -444,9 +444,9 @@ $$\text{checksum} = \left( \sum_{i=0}^{8} \text{byte}[i] \right) \pmod{256}$$
 ss -ltnp | grep 8899
 ```
 
-确认真实的 `icar_socket_bridge` 没有占用同一个端口。
+确认真实的下位机通信桥接程序没有占用同一个端口。
 
-如果 XSmart 使用 `--debug` 启动，必须同时加上 `--debug-control`。
+如果上位机程序有开关选项，请确认已开启控制帧发送功能。
 
 ### setupUI 收不到虚拟位姿
 
